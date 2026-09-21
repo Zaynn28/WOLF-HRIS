@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { 
   LayoutDashboard, Users, Clock, CalendarDays, DollarSign, FileText, 
   BarChart3, Bot, Shield, Settings, ChevronLeft, ChevronRight, 
-  Building2, Briefcase, LogOut, Menu, Database
+  Building2, Briefcase, LogOut, Menu, Database, Upload, Calendar, UserCircle
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -52,10 +52,12 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
         { id: 'payroll-periods', label: 'Periods' },
         { id: 'payroll-calculation', label: 'Calculation' },
         { id: 'payslips', label: 'Payslips' },
-        { id: 'payslips', label: 'Payslips' },
       ]
     },
     { id: 'documents', label: 'Documents', icon: <FileText size={20} /> },
+    { id: 'data-import-export', label: 'Import/Export', icon: <Upload size={20} /> },
+    { id: 'attendance-calendar', label: 'Attendance Calendar', icon: <Calendar size={20} /> },
+    { id: 'employee-self-service', label: 'My Dashboard', icon: <UserCircle size={20} /> },
     { id: 'reports', label: 'Reports', icon: <BarChart3 size={20} /> },
     { id: 'ai-assistant', label: 'AI Assistant', icon: <Bot size={20} /> },
     { id: 'audit', label: 'Controls & Audit', icon: <Shield size={20} /> },

@@ -21,6 +21,9 @@ import PayslipsPage from './pages/PayslipsPage';
 import ShiftAssignmentPage from './pages/ShiftAssignmentPage';
 import ContractManagementPage from './pages/ContractManagementPage';
 import OrgChartPage from './pages/OrgChartPage';
+import DataImportExportPage from './pages/DataImportExportPage';
+import AttendanceCalendarPage from './pages/AttendanceCalendarPage';
+import EmployeeSelfServicePage from './pages/EmployeeSelfServicePage';
 import { Search, ChevronDown } from 'lucide-react';
 
 function AppContent() {
@@ -48,6 +51,9 @@ function AppContent() {
       case 'shift-assignment': return <ShiftAssignmentPage />;
       case 'contracts': return <ContractManagementPage />;
       case 'org-chart': return <OrgChartPage />;
+      case 'data-import-export': return <DataImportExportPage />;
+      case 'attendance-calendar': return <AttendanceCalendarPage />;
+      case 'employee-self-service': return <EmployeeSelfServicePage />;
       case 'documents': return <DocumentsPage />;
       case 'reports': return <ReportsPage />;
       case 'ai-assistant': return <AIAssistantPage />;
@@ -75,6 +81,9 @@ function AppContent() {
       'shift-assignment': 'Shift Assignment',
       'contracts': 'Contract Management',
       'org-chart': 'Organization Chart',
+      'data-import-export': 'Data Import & Export',
+      'attendance-calendar': 'Attendance Calendar',
+      'employee-self-service': 'My Dashboard',
       'documents': 'Documents',
       'reports': 'Reports',
       'ai-assistant': 'AI Assistant',
