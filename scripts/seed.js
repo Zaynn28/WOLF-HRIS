@@ -25,29 +25,30 @@ const config = {
 // Import mock data
 const mockData = {
   departments: [
-    { code: 'F&B', name: 'Food & Beverage', description: 'Restaurant, bar, and banquet operations' },
-    { code: 'HK', name: 'Housekeeping', description: 'Room cleaning and public area maintenance' },
-    { code: 'FO', name: 'Front Office', description: 'Reception, concierge, and guest services' },
-    { code: 'ENG', name: 'Engineering', description: 'Building maintenance and technical operations' },
-    { code: 'HR', name: 'Human Resources', description: 'HR administration and employee relations' },
-    { code: 'FIN', name: 'Finance', description: 'Accounting, procurement, and financial control' },
-    { code: 'SEC', name: 'Security', description: 'Hotel security and safety operations' },
-    { code: 'REV', name: 'Revenue Management', description: 'Pricing, distribution, and revenue optimization' },
+    { id: '550e8400-e29b-41d4-a716-446655440001', code: 'F&B', name: 'Food & Beverage', description: 'Restaurant, bar, and banquet operations' },
+    { id: '550e8400-e29b-41d4-a716-446655440002', code: 'HK', name: 'Housekeeping', description: 'Room cleaning and public area maintenance' },
+    { id: '550e8400-e29b-41d4-a716-446655440003', code: 'FO', name: 'Front Office', description: 'Reception, concierge, and guest services' },
+    { id: '550e8400-e29b-41d4-a716-446655440004', code: 'ENG', name: 'Engineering', description: 'Building maintenance and technical operations' },
+    { id: '550e8400-e29b-41d4-a716-446655440005', code: 'HR', name: 'Human Resources', description: 'HR administration and employee relations' },
+    { id: '550e8400-e29b-41d4-a716-446655440006', code: 'FIN', name: 'Finance', description: 'Accounting, procurement, and financial control' },
+    { id: '550e8400-e29b-41d4-a716-446655440007', code: 'SEC', name: 'Security', description: 'Hotel security and safety operations' },
+    { id: '550e8400-e29b-41d4-a716-446655440008', code: 'REV', name: 'Revenue Management', description: 'Pricing, distribution, and revenue optimization' },
   ],
   positions: [
-    { code: 'F&B-MGR', title: 'F&B Manager', departmentCode: 'F&B', grade: 'M2', description: 'Manages F&B operations' },
-    { code: 'F&B-SRV', title: 'F&B Service Staff', departmentCode: 'F&B', grade: 'S1', description: 'Restaurant service' },
-    { code: 'HK-SUP', title: 'Housekeeping Supervisor', departmentCode: 'HK', grade: 'S2', description: 'Supervises housekeeping team' },
-    { code: 'HK-ATT', title: 'Room Attendant', departmentCode: 'HK', grade: 'S1', description: 'Room cleaning' },
-    { code: 'FO-RCV', title: 'Receptionist', departmentCode: 'FO', grade: 'S1', description: 'Front desk operations' },
-    { code: 'FO-MGR', title: 'Front Office Manager', departmentCode: 'FO', grade: 'M2', description: 'Manages front office' },
-    { code: 'ENG-TEC', title: 'Maintenance Technician', departmentCode: 'ENG', grade: 'S1', description: 'Technical maintenance' },
-    { code: 'HR-STF', title: 'HR Staff', departmentCode: 'HR', grade: 'S2', description: 'HR administration' },
-    { code: 'SEC-GRD', title: 'Security Guard', departmentCode: 'SEC', grade: 'S1', description: 'Security patrol' },
-    { code: 'FIN-ACC', title: 'Accountant', departmentCode: 'FIN', grade: 'S2', description: 'Financial accounting' },
+    { id: '550e8400-e29b-41d4-a716-446655440011', code: 'F&B-MGR', title: 'F&B Manager', departmentCode: 'F&B', grade: 'M2', description: 'Manages F&B operations' },
+    { id: '550e8400-e29b-41d4-a716-446655440012', code: 'F&B-SRV', title: 'F&B Service Staff', departmentCode: 'F&B', grade: 'S1', description: 'Restaurant service' },
+    { id: '550e8400-e29b-41d4-a716-446655440013', code: 'HK-SUP', title: 'Housekeeping Supervisor', departmentCode: 'HK', grade: 'S2', description: 'Supervises housekeeping team' },
+    { id: '550e8400-e29b-41d4-a716-446655440014', code: 'HK-ATT', title: 'Room Attendant', departmentCode: 'HK', grade: 'S1', description: 'Room cleaning' },
+    { id: '550e8400-e29b-41d4-a716-446655440015', code: 'FO-RCV', title: 'Receptionist', departmentCode: 'FO', grade: 'S1', description: 'Front desk operations' },
+    { id: '550e8400-e29b-41d4-a716-446655440016', code: 'FO-MGR', title: 'Front Office Manager', departmentCode: 'FO', grade: 'M2', description: 'Manages front office' },
+    { id: '550e8400-e29b-41d4-a716-446655440017', code: 'ENG-TEC', title: 'Maintenance Technician', departmentCode: 'ENG', grade: 'S1', description: 'Technical maintenance' },
+    { id: '550e8400-e29b-41d4-a716-446655440018', code: 'HR-STF', title: 'HR Staff', departmentCode: 'HR', grade: 'S2', description: 'HR administration' },
+    { id: '550e8400-e29b-41d4-a716-446655440019', code: 'SEC-GRD', title: 'Security Guard', departmentCode: 'SEC', grade: 'S1', description: 'Security patrol' },
+    { id: '550e8400-e29b-41d4-a716-446655440020', code: 'FIN-ACC', title: 'Accountant', departmentCode: 'FIN', grade: 'S2', description: 'Financial accounting' },
   ],
   employees: [
     {
+      id: '550e8400-e29b-41d4-a716-446655440101',
       employeeCode: 'EMP-001', fullName: 'Ahmad Wijaya', preferredName: 'Ahmad',
       nik: '3201010101900001', npwp: '01.234.567.8-012.000',
       dateOfBirth: '1990-01-15', gender: 'M', phone: '+6281234567890',
@@ -58,6 +59,7 @@ const mockData = {
       bankAccountName: 'Ahmad Wijaya'
     },
     {
+      id: '550e8400-e29b-41d4-a716-446655440102',
       employeeCode: 'EMP-002', fullName: 'Dewi Lestari', preferredName: 'Dewi',
       nik: '3201010102920002', npwp: '02.345.678.9-012.000',
       dateOfBirth: '1992-05-22', gender: 'F', phone: '+6281234567892',
@@ -194,7 +196,7 @@ async function seed() {
     console.log('📦 Seeding departments...');
     const departmentMap = new Map();
     for (const dept of mockData.departments) {
-      const id = uuidv4();
+      const id = dept.id || uuidv4();
       await client.query(
         `INSERT INTO departments (id, code, name, description, is_active) 
          VALUES ($1, $2, $3, $4, true)`,
@@ -208,7 +210,7 @@ async function seed() {
     console.log('📦 Seeding positions...');
     const positionMap = new Map();
     for (const pos of mockData.positions) {
-      const id = uuidv4();
+      const id = pos.id || uuidv4();
       const deptId = departmentMap.get(pos.departmentCode);
       await client.query(
         `INSERT INTO positions (id, code, title, department_id, grade, description, is_active) 
@@ -223,7 +225,7 @@ async function seed() {
     console.log('📦 Seeding employees...');
     const employeeMap = new Map();
     for (const emp of mockData.employees) {
-      const id = uuidv4();
+      const id = emp.id || uuidv4();
       const deptId = departmentMap.get(emp.departmentCode);
       const posId = positionMap.get(emp.positionCode);
       

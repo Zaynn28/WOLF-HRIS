@@ -101,28 +101,28 @@ export default function EmployeesPage() {
     const employeeData = {
       employee_code: empCode,
       full_name: newEmp.fullName,
-      preferred_name: newEmp.preferredName || undefined,
+      preferred_name: newEmp.preferredName || null,
       nik: newEmp.nik,
-      npwp: newEmp.npwp || undefined,
-      date_of_birth: newEmp.dateOfBirth,
+      npwp: newEmp.npwp || null,
+      date_of_birth: newEmp.dateOfBirth || null,
       gender: newEmp.gender,
-      phone: newEmp.phone,
+      phone: newEmp.phone || null,
       email: newEmp.email,
-      address: newEmp.address,
-      emergency_contact_name: newEmp.emergencyContactName,
-      emergency_contact_phone: newEmp.emergencyContactPhone,
+      address: newEmp.address || null,
+      emergency_contact_name: newEmp.emergencyContactName || null,
+      emergency_contact_phone: newEmp.emergencyContactPhone || null,
       department_id: newEmp.departmentId,
       position_id: newEmp.positionId,
       employment_status: newEmp.employmentStatus,
       join_date: newEmp.joinDate || new Date().toISOString().split('T')[0],
-      bank_name: newEmp.bankName || undefined,
-      bank_account_number: newEmp.bankAccountNumber || undefined,
-      bank_account_name: newEmp.bankAccountName || undefined,
+      bank_name: newEmp.bankName || null,
+      bank_account_number: newEmp.bankAccountNumber || null,
+      bank_account_name: newEmp.bankAccountName || null,
     };
 
     try {
       if (isApiAvailable()) {
-        // Use API
+        // Use API - don't send ID, let backend generate UUID
         const created = await employeesApi.create(employeeData);
         const newEmployee: Employee = {
           id: created.id,
@@ -151,14 +151,14 @@ export default function EmployeesPage() {
         addAuditLog('CREATE', 'Employee', newEmployee.id, `${newEmployee.fullName} created`);
         addToast(`Employee ${newEmployee.fullName} (${empCode}) created successfully`, 'success');
       } else {
-        // Use mock data
+        // Use mock data - generate simple ID for local use only
         const employee: Employee = {
-          id: 'e' + Date.now(),
+          id: 'mock-' + Date.now(),
           employeeCode: empCode,
           fullName: newEmp.fullName,
-          preferredName: newEmp.preferredName || undefined,
+          preferredName: newEmp.preferredName,
           nik: newEmp.nik,
-          npwp: newEmp.npwp || undefined,
+          npwp: newEmp.npwp,
           dateOfBirth: newEmp.dateOfBirth,
           gender: newEmp.gender,
           phone: newEmp.phone,
@@ -170,9 +170,9 @@ export default function EmployeesPage() {
           positionId: newEmp.positionId,
           employmentStatus: newEmp.employmentStatus,
           joinDate: newEmp.joinDate || new Date().toISOString().split('T')[0],
-          bankName: newEmp.bankName || undefined,
-          bankAccountNumber: newEmp.bankAccountNumber || undefined,
-          bankAccountName: newEmp.bankAccountName || undefined,
+          bankName: newEmp.bankName,
+          bankAccountNumber: newEmp.bankAccountNumber,
+          bankAccountName: newEmp.bankAccountName,
         };
         setLocalEmployees(prev => [...prev, employee]);
         setEmployees(prev => [...prev, employee]);
