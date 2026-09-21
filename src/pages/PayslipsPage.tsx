@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { employees, payrollRecords, payrollPeriods, departments, positions } from '../data/mockData';
-import { FileText, Download, Printer, Search, Filter } from 'lucide-react';
+import { FileText, Download, Printer, Search, Filter, Mail, FileSpreadsheet } from 'lucide-react';
+import { useApp } from '../context/AppContext';
 
 export default function PayslipsPage() {
+  const { addToast } = useApp();
   const [selectedPeriod, setSelectedPeriod] = useState(payrollPeriods[0]?.id);
   const [selectedEmployee, setSelectedEmployee] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -143,6 +145,133 @@ export default function PayslipsPage() {
     printWindow.document.close();
   };
 
+  const handleExportPDF = (record: typeof records[0]) => {
+    const emp = getEmp(record.employeeId);
+    const breakdown = getBreakdown(record);
+    
+    // Create PDF content (using browser print to PDF)
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Payslip - ${emp?.fullName} - ${period?.periodCode}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; }
+          .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 30px; }
+          .header h1 { margin: 0; color: #4F46E5; }
+          .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
+          .info-box { border: 1px solid #ddd; padding: 15px; border-radius: 8px; }
+          .table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+          .table th, .table td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+          .table th { background-color: #f5f5f5; font-weight: bold; }
+          .amount { text-align: right; }
+          .total-row { font-weight: bold; background-color: #f9f9f9; }
+          .net-pay { font-size: 18px; color: #10B981; font-weight: bold; }
+          .footer { margin-top: 40px; text-align: center; color: #666; font-size: 12px; border-top: 1px solid #ddd; padding-top: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>ATRIUM HOTEL</h1>
+          <p>Payslip for ${period?.periodCode}</p>
+          <p>Pay Date: ${period?.payDate}</p>
+        </div>
+        <div class="info-grid">
+          <div class="info-box">
+            <h3>Employee Information</h3>
+            <p><strong>Name:</strong> ${emp?.fullName}</p>
+            <p><strong>Employee Code:</strong> ${emp?.employeeCode}</p>
+            <p><strong>Department:</strong> ${emp ? getDept(emp.departmentId) : '-'}</p>
+            <p><strong>Position:</strong> ${emp ? getPos(emp.positionId) : '-'}</p>
+          </div>
+          <div class="info-box">
+            <h3>Payment Details</h3>
+            <p><strong>Period:</strong> ${period?.startDate} to ${period?.endDate}</p>
+            <p><strong>Pay Date:</strong> ${period?.payDate}</p>
+            <p><strong>Bank:</strong> ${emp?.bankName || '-'}</p>
+            <p><strong>Account:</strong> ${emp?.bankAccountNumber || '-'}</p>
+          </div>
+        </div>
+        <h3>Earnings</h3>
+        <table class="table">
+          <thead><tr><th>Component</th><th class="amount">Amount</th></tr></thead>
+          <tbody>
+            <tr><td>Basic Salary</td><td class="amount">${formatCurrency(breakdown.basicSalary)}</td></tr>
+            <tr><td>Position Allowance</td><td class="amount">${formatCurrency(breakdown.allowance)}</td></tr>
+            <tr><td>Overtime Pay</td><td class="amount">${formatCurrency(breakdown.overtime)}</td></tr>
+            <tr><td>Service Charge</td><td class="amount">${formatCurrency(breakdown.serviceCharge)}</td></tr>
+            <tr class="total-row"><td><strong>Total Gross</strong></td><td class="amount"><strong>${formatCurrency(record.grossPay)}</strong></td></tr>
+          </tbody>
+        </table>
+        <h3>Deductions</h3>
+        <table class="table">
+          <thead><tr><th>Component</th><th class="amount">Amount</th></tr></thead>
+          <tbody>
+            <tr><td>BPJS Kesehatan & Ketenagakerjaan</td><td class="amount">${formatCurrency(breakdown.bpjs)}</td></tr>
+            <tr><td>PPh 21 (Income Tax)</td><td class="amount">${formatCurrency(breakdown.tax)}</td></tr>
+            <tr class="total-row"><td><strong>Total Deductions</strong></td><td class="amount"><strong>${formatCurrency(record.totalDeductions)}</strong></td></tr>
+          </tbody>
+        </table>
+        <table class="table">
+          <tr class="total-row"><td><strong>NET PAY</strong></td><td class="amount net-pay">${formatCurrency(record.netPay)}</td></tr>
+        </table>
+        <div class="footer">
+          <p>This is a computer-generated payslip and does not require a signature.</p>
+          <p>Generated on ${new Date().toLocaleDateString()} | ATRIUM HRIS</p>
+        </div>
+      </body>
+      </html>
+    `;
+
+    printWindow.document.write(html);
+    printWindow.document.close();
+    
+    // Auto-trigger print dialog for PDF save
+    setTimeout(() => {
+      printWindow.print();
+    }, 500);
+  };
+
+  const handleSendEmail = (record: typeof records[0]) => {
+    const emp = getEmp(record.employeeId);
+    if (!emp?.email) {
+      alert('Employee email not found');
+      return;
+    }
+
+    const subject = `Payslip ${period?.periodCode} - ${emp?.fullName}`;
+    const body = `Dear ${emp?.fullName},\n\nPlease find attached your payslip for the period ${period?.periodCode}.\n\nPeriod: ${period?.startDate} to ${period?.endDate}\nNet Pay: ${formatCurrency(record.netPay)}\nPay Date: ${period?.payDate}\n\nYou can view your detailed payslip by printing it from the HRIS system.\n\nBest regards,\nHR Department\nATRIUM Hotel`;
+
+    // Open email client with pre-filled data
+    const mailtoLink = `mailto:${emp.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.location.href = mailtoLink;
+    
+    addToast(`Email prepared for ${emp.email}`, 'success');
+  };
+
+  const handleExportExcel = () => {
+    // Create CSV content for all payslips in the period
+    let csvContent = 'Employee Code,Name,Department,Position,Gross Pay,Deductions,Net Pay,Pay Date\n';
+    
+    records.forEach(record => {
+      const emp = getEmp(record.employeeId);
+      csvContent += `${emp?.employeeCode},${emp?.fullName},${emp ? getDept(emp.departmentId) : '-'},${emp ? getPos(emp.positionId) : '-'},${record.grossPay},${record.totalDeductions},${record.netPay},${period?.payDate}\n`;
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `payroll_report_${period?.periodCode}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+    
+    addToast('Payroll report exported to Excel/CSV', 'success');
+  };
+
   const selectedRecord = selectedEmployee ? records.find(r => r.employeeId === selectedEmployee) : null;
 
   return (
@@ -152,6 +281,12 @@ export default function PayslipsPage() {
           <h1 className="text-2xl font-bold text-slate-800">Payslips</h1>
           <p className="text-slate-500 text-sm mt-1">View and print employee payslips</p>
         </div>
+        <button
+          onClick={handleExportExcel}
+          className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors text-sm font-medium"
+        >
+          <FileSpreadsheet size={16} /> Export to Excel
+        </button>
       </div>
 
       {/* Period Selector */}
@@ -217,11 +352,25 @@ export default function PayslipsPage() {
                   <span className="font-bold text-emerald-600">{formatCurrency(record.netPay)}</span>
                 </div>
               </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handlePrint(record)}
+                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
+                >
+                  <Printer size={14} /> Print
+                </button>
+                <button
+                  onClick={() => handleExportPDF(record)}
+                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors"
+                >
+                  <Download size={14} /> PDF
+                </button>
+              </div>
               <button
-                onClick={() => handlePrint(record)}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
+                onClick={() => handleSendEmail(record)}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 mt-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors"
               >
-                <Printer size={16} /> Print Payslip
+                <Mail size={16} /> Send via Email
               </button>
             </div>
           );

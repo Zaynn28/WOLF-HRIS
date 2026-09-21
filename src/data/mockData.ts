@@ -47,11 +47,18 @@ export const employees: Employee[] = [
 ];
 
 export const leaveTypes: LeaveType[] = [
-  { id: 'lt1', code: 'AL', name: 'Annual Leave', defaultEntitlement: 12, isPaid: true, isActive: true },
-  { id: 'lt2', code: 'SL', name: 'Sick Leave', defaultEntitlement: 10, isPaid: true, isActive: true },
-  { id: 'lt3', code: 'ML', name: 'Maternity Leave', defaultEntitlement: 90, isPaid: true, isActive: true },
-  { id: 'lt4', code: 'UL', name: 'Unpaid Leave', defaultEntitlement: 0, isPaid: false, isActive: true },
-  { id: 'lt5', code: 'CL', name: 'Compassionate Leave', defaultEntitlement: 3, isPaid: true, isActive: true },
+  { id: 'lt1', code: 'AL', name: 'Cuti Tahunan (Annual Leave)', defaultEntitlement: 12, isPaid: true, isActive: true },
+  { id: 'lt2', code: 'SL', name: 'Cuti Sakit (Sick Leave)', defaultEntitlement: 0, isPaid: true, isActive: true },
+  { id: 'lt3', code: 'ML', name: 'Cuti Melahirkan (Maternity Leave)', defaultEntitlement: 90, isPaid: true, isActive: true },
+  { id: 'lt4', code: 'PL', name: 'Cuti Ayah (Paternity Leave)', defaultEntitlement: 2, isPaid: true, isActive: true },
+  { id: 'lt5', code: 'MRL', name: 'Cuti Menikah (Marriage Leave)', defaultEntitlement: 3, isPaid: true, isActive: true },
+  { id: 'lt6', code: 'MCL', name: 'Cuti Menikahkan Anak (Child Marriage Leave)', defaultEntitlement: 2, isPaid: true, isActive: true },
+  { id: 'lt7', code: 'CL', name: 'Cuti Menghitamkan Anak (Child Circumcision Leave)', defaultEntitlement: 2, isPaid: true, isActive: true },
+  { id: 'lt8', code: 'BL', name: 'Cuti Membaptiskan Anak (Child Baptism Leave)', defaultEntitlement: 2, isPaid: true, isActive: true },
+  { id: 'lt9', code: 'MIS', name: 'Cuti Istri Keguguran (Miscarriage Leave)', defaultEntitlement: 30, isPaid: true, isActive: true },
+  { id: 'lt10', code: 'BL-C', name: 'Cuti Berkabung - Suami/Istri/Ortua/Mertua/Anak (Immediate Family Death)', defaultEntitlement: 3, isPaid: true, isActive: true },
+  { id: 'lt11', code: 'BL-E', name: 'Cuti Berkabung - Anggota Keluarga Serumah (Household Member Death)', defaultEntitlement: 1, isPaid: true, isActive: true },
+  { id: 'lt12', code: 'UL', name: 'Cuti Tidak Berbayar (Unpaid Leave)', defaultEntitlement: 0, isPaid: false, isActive: true },
 ];
 
 const today = new Date().toISOString().split('T')[0];

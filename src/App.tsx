@@ -33,6 +33,7 @@ import CustomReportsPage from './pages/CustomReportsPage';
 import ApprovalMatrixPage from './pages/ApprovalMatrixPage';
 import EmailNotificationsPage from './pages/EmailNotificationsPage';
 import AIAnomalyDetectionPage from './pages/AIAnomalyDetectionPage';
+import RegulationsPage from './pages/RegulationsPage';
 import ConnectionStatus from './components/ConnectionStatus';
 import { Search, ChevronDown } from 'lucide-react';
 
@@ -68,6 +69,7 @@ function AppContent() {
       case 'approval-matrix': return <ApprovalMatrixPage />;
       case 'email-notifications': return <EmailNotificationsPage />;
       case 'ai-anomaly-detection': return <AIAnomalyDetectionPage />;
+      case 'regulations': return <RegulationsPage />;
       case 'documents': return <DocumentsPage />;
       case 'reports': return <ReportsPage />;
       case 'ai-assistant': return <AIAssistantPage />;
@@ -102,6 +104,7 @@ function AppContent() {
       'approval-matrix': 'Approval Matrix',
       'email-notifications': 'Email Notifications',
       'ai-anomaly-detection': 'AI Anomaly Detection',
+      'regulations': 'Regulations & Tariffs',
       'documents': 'Documents',
       'reports': 'Reports',
       'ai-assistant': 'AI Assistant',

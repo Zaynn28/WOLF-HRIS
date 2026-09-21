@@ -65,6 +65,7 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
     { id: 'ai-anomaly-detection', label: 'AI Anomaly Detection', icon: <Brain size={20} /> },
     { id: 'email-notifications', label: 'Email Notifications', icon: <Mail size={20} /> },
     { id: 'approval-matrix', label: 'Approval Matrix', icon: <GitBranch size={20} /> },
+    { id: 'regulations', label: 'Regulations & Tariffs', icon: <Settings size={20} /> },
     { id: 'audit', label: 'Controls & Audit', icon: <Shield size={20} /> },
     { id: 'configuration', label: 'Configuration', icon: <Settings size={20} /> },
     { id: 'database', label: 'Database (Sheets)', icon: <Database size={20} /> },

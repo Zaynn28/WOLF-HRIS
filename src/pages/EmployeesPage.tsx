@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { employees as mockEmployees, departments, positions } from '../data/mockData';
 import { employeesApi, isApiAvailable } from '../services/api';
-import { Search, Filter, Plus, ChevronRight, Mail, Phone, MapPin, Calendar, Briefcase, Users, RefreshCw } from 'lucide-react';
+import { Search, Filter, Plus, ChevronRight, Mail, Phone, MapPin, Calendar, Briefcase, Users, RefreshCw, Upload } from 'lucide-react';
 import Modal from '../components/Modal';
+import BulkUploadModal from '../components/BulkUploadModal';
 import { Employee } from '../types';
 
 export default function EmployeesPage() {
@@ -13,6 +14,7 @@ export default function EmployeesPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [loading, setLoading] = useState(false);
   const [employees, setLocalEmployees] = useState<Employee[]>(mockEmployees);
   const [newEmp, setNewEmp] = useState({
@@ -97,7 +99,12 @@ export default function EmployeesPage() {
       return;
     }
 
-    const empCode = `EMP-${String(employees.length + 1).padStart(3, '0')}`;
+    // Generate employee code in format: AMG + YY + MM + Number
+    const now = new Date();
+    const yy = String(now.getFullYear()).slice(-2);
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const randomNum = String(Math.floor(Math.random() * 9000) + 1000);
+    const empCode = `AMG${yy}${mm}${randomNum}`;
     const employeeData = {
       employee_code: empCode,
       full_name: newEmp.fullName,
@@ -325,6 +332,9 @@ export default function EmployeesPage() {
           <button onClick={() => setShowAddModal(true)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium">
             <Plus size={16} /> Add Employee
           </button>
+          <button onClick={() => setShowBulkUpload(true)} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors text-sm font-medium">
+            <Upload size={16} /> Bulk Upload
+          </button>
         </div>
       </div>
 
@@ -467,6 +477,9 @@ export default function EmployeesPage() {
           </div>
         </div>
       </Modal>
+
+      {/* Bulk Upload Modal */}
+      <BulkUploadModal isOpen={showBulkUpload} onClose={() => setShowBulkUpload(false)} />
     </div>
   );
 }
