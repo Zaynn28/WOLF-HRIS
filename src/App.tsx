@@ -29,6 +29,10 @@ import OrgChartPage from './pages/OrgChartPage';
 import DataImportExportPage from './pages/DataImportExportPage';
 import AttendanceCalendarPage from './pages/AttendanceCalendarPage';
 import EmployeeSelfServicePage from './pages/EmployeeSelfServicePage';
+import CustomReportsPage from './pages/CustomReportsPage';
+import ApprovalMatrixPage from './pages/ApprovalMatrixPage';
+import EmailNotificationsPage from './pages/EmailNotificationsPage';
+import AIAnomalyDetectionPage from './pages/AIAnomalyDetectionPage';
 import { Search, ChevronDown } from 'lucide-react';
 
 function AppContent() {
@@ -59,6 +63,10 @@ function AppContent() {
       case 'data-import-export': return <DataImportExportPage />;
       case 'attendance-calendar': return <AttendanceCalendarPage />;
       case 'employee-self-service': return <EmployeeSelfServicePage />;
+      case 'custom-reports': return <CustomReportsPage />;
+      case 'approval-matrix': return <ApprovalMatrixPage />;
+      case 'email-notifications': return <EmailNotificationsPage />;
+      case 'ai-anomaly-detection': return <AIAnomalyDetectionPage />;
       case 'documents': return <DocumentsPage />;
       case 'reports': return <ReportsPage />;
       case 'ai-assistant': return <AIAssistantPage />;
@@ -89,6 +97,10 @@ function AppContent() {
       'data-import-export': 'Data Import & Export',
       'attendance-calendar': 'Attendance Calendar',
       'employee-self-service': 'My Dashboard',
+      'custom-reports': 'Custom Reports',
+      'approval-matrix': 'Approval Matrix',
+      'email-notifications': 'Email Notifications',
+      'ai-anomaly-detection': 'AI Anomaly Detection',
       'documents': 'Documents',
       'reports': 'Reports',
       'ai-assistant': 'AI Assistant',

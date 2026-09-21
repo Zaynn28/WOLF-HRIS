@@ -3,7 +3,8 @@ import { useAuth } from '../context/AuthContext';
 import { 
   LayoutDashboard, Users, Clock, CalendarDays, DollarSign, FileText, 
   BarChart3, Bot, Shield, Settings, ChevronLeft, ChevronRight, 
-  Building2, Briefcase, LogOut, Menu, Database, Upload, Calendar, UserCircle
+  Building2, Briefcase, LogOut, Menu, Database, Upload, Calendar, UserCircle,
+  GitBranch, Mail, Brain, FileBarChart
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -59,7 +60,11 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
     { id: 'attendance-calendar', label: 'Attendance Calendar', icon: <Calendar size={20} /> },
     { id: 'employee-self-service', label: 'My Dashboard', icon: <UserCircle size={20} /> },
     { id: 'reports', label: 'Reports', icon: <BarChart3 size={20} /> },
+    { id: 'custom-reports', label: 'Custom Reports', icon: <FileBarChart size={20} /> },
     { id: 'ai-assistant', label: 'AI Assistant', icon: <Bot size={20} /> },
+    { id: 'ai-anomaly-detection', label: 'AI Anomaly Detection', icon: <Brain size={20} /> },
+    { id: 'email-notifications', label: 'Email Notifications', icon: <Mail size={20} /> },
+    { id: 'approval-matrix', label: 'Approval Matrix', icon: <GitBranch size={20} /> },
     { id: 'audit', label: 'Controls & Audit', icon: <Shield size={20} /> },
     { id: 'configuration', label: 'Configuration', icon: <Settings size={20} /> },
     { id: 'database', label: 'Database (Sheets)', icon: <Database size={20} /> },
