@@ -17,6 +17,10 @@ import AIAssistantPage from './pages/AIAssistantPage';
 import AuditPage from './pages/AuditPage';
 import ConfigurationPage from './pages/ConfigurationPage';
 import GoogleSheetsSettings from './pages/GoogleSheetsSettings';
+import PayslipsPage from './pages/PayslipsPage';
+import ShiftAssignmentPage from './pages/ShiftAssignmentPage';
+import ContractManagementPage from './pages/ContractManagementPage';
+import OrgChartPage from './pages/OrgChartPage';
 import { Search, ChevronDown } from 'lucide-react';
 
 function AppContent() {
@@ -40,7 +44,10 @@ function AppContent() {
       case 'overtime': return <OvertimePage />;
       case 'payroll-periods': return <PayrollPage />;
       case 'payroll-calculation': return <PayrollPage />;
-      case 'payslips': return <PayrollPage />;
+      case 'payslips': return <PayslipsPage />;
+      case 'shift-assignment': return <ShiftAssignmentPage />;
+      case 'contracts': return <ContractManagementPage />;
+      case 'org-chart': return <OrgChartPage />;
       case 'documents': return <DocumentsPage />;
       case 'reports': return <ReportsPage />;
       case 'ai-assistant': return <AIAssistantPage />;
@@ -65,6 +72,9 @@ function AppContent() {
       'payroll-periods': 'Payroll Periods',
       'payroll-calculation': 'Payroll Calculation',
       'payslips': 'Payslips',
+      'shift-assignment': 'Shift Assignment',
+      'contracts': 'Contract Management',
+      'org-chart': 'Organization Chart',
       'documents': 'Documents',
       'reports': 'Reports',
       'ai-assistant': 'AI Assistant',

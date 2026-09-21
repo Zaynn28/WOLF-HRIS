@@ -31,6 +31,8 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
         { id: 'employees', label: 'Employees' },
         { id: 'departments', label: 'Departments' },
         { id: 'positions', label: 'Positions' },
+        { id: 'contracts', label: 'Contracts' },
+        { id: 'org-chart', label: 'Organization Chart' },
       ]
     },
     { 
@@ -38,6 +40,7 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       children: [
         { id: 'daily-attendance', label: 'Daily Attendance' },
         { id: 'shifts', label: 'Shifts' },
+        { id: 'shift-assignment', label: 'Shift Assignment' },
         { id: 'corrections', label: 'Corrections' },
       ]
     },
@@ -48,6 +51,7 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       children: [
         { id: 'payroll-periods', label: 'Periods' },
         { id: 'payroll-calculation', label: 'Calculation' },
+        { id: 'payslips', label: 'Payslips' },
         { id: 'payslips', label: 'Payslips' },
       ]
     },
