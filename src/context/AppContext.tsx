@@ -52,6 +52,7 @@ interface AppContextType {
   addAuditLog: (action: string, entityType: string, entityId: string, newValue?: string, oldValue?: string) => void;
   addNotification: (type: Notification['type'], title: string, message: string) => void;
   markNotificationRead: (id: string) => void;
+  markAllNotificationsRead: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -114,6 +115,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, readAt: new Date().toISOString() } : n));
   }, []);
 
+  const markAllNotificationsRead = useCallback(() => {
+    setNotifications(prev => prev.map(n => ({ ...n, readAt: new Date().toISOString() })));
+  }, []);
+
   return (
     <AppContext.Provider value={{
       employees, setEmployees,
@@ -129,7 +134,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       auditLogs, setAuditLogs,
       notifications, setNotifications,
       toasts, addToast, removeToast,
-      addAuditLog, addNotification, markNotificationRead,
+      addAuditLog, addNotification, markNotificationRead, markAllNotificationsRead,
     }}>
       {children}
     </AppContext.Provider>
