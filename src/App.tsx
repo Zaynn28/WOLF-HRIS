@@ -33,6 +33,7 @@ import CustomReportsPage from './pages/CustomReportsPage';
 import ApprovalMatrixPage from './pages/ApprovalMatrixPage';
 import EmailNotificationsPage from './pages/EmailNotificationsPage';
 import AIAnomalyDetectionPage from './pages/AIAnomalyDetectionPage';
+import ConnectionStatus from './components/ConnectionStatus';
 import { Search, ChevronDown } from 'lucide-react';
 
 function AppContent() {
@@ -135,6 +136,7 @@ function AppContent() {
                   className="pl-9 pr-4 py-2 w-48 lg:w-64 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                 />
               </div>
+              <ConnectionStatus />
               <NotificationCenter />
               <ThemeToggle />
               <div className="flex items-center gap-2 pl-3 border-l border-slate-200">

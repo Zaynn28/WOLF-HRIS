@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { departments, positions, employees } from '../data/mockData';
-import { Search, Filter, Plus, ChevronRight, Mail, Phone, MapPin, Calendar, Briefcase, Users, X } from 'lucide-react';
+import { employees as mockEmployees, departments, positions } from '../data/mockData';
+import { employeesApi, isApiAvailable } from '../services/api';
+import { Search, Filter, Plus, ChevronRight, Mail, Phone, MapPin, Calendar, Briefcase, Users, RefreshCw } from 'lucide-react';
 import Modal from '../components/Modal';
 import { Employee } from '../types';
 
@@ -12,12 +13,58 @@ export default function EmployeesPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [employees, setLocalEmployees] = useState<Employee[]>(mockEmployees);
   const [newEmp, setNewEmp] = useState({
     fullName: '', preferredName: '', nik: '', npwp: '', dateOfBirth: '', gender: 'M' as 'M' | 'F',
     phone: '', email: '', address: '', emergencyContactName: '', emergencyContactPhone: '',
     departmentId: '', positionId: '', employmentStatus: 'ACTIVE' as const, joinDate: '',
     bankName: '', bankAccountNumber: '', bankAccountName: '',
   });
+
+  // Load employees from API if available
+  useEffect(() => {
+    const loadEmployees = async () => {
+      if (isApiAvailable()) {
+        setLoading(true);
+        try {
+          const data = await employeesApi.getAll();
+          // Transform API data to match frontend format
+          const transformed = data.map((emp: any) => ({
+            id: emp.id,
+            employeeCode: emp.employee_code,
+            fullName: emp.full_name,
+            preferredName: emp.preferred_name,
+            nik: emp.nik,
+            npwp: emp.npwp,
+            dateOfBirth: emp.date_of_birth,
+            gender: emp.gender,
+            phone: emp.phone,
+            email: emp.email,
+            address: emp.address,
+            emergencyContactName: emp.emergency_contact_name,
+            emergencyContactPhone: emp.emergency_contact_phone,
+            departmentId: emp.department_id,
+            positionId: emp.position_id,
+            employmentStatus: emp.employment_status,
+            joinDate: emp.join_date,
+            bankName: emp.bank_name,
+            bankAccountNumber: emp.bank_account_number,
+            bankAccountName: emp.bank_account_name,
+          }));
+          setLocalEmployees(transformed);
+          setEmployees(transformed);
+        } catch (error) {
+          console.error('Failed to load employees from API:', error);
+          addToast('Using demo data. Start backend for live data.', 'info');
+        } finally {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadEmployees();
+  }, []);
 
   const filtered = employees.filter(e => {
     const matchSearch = e.fullName.toLowerCase().includes(search.toLowerCase()) || e.employeeCode.toLowerCase().includes(search.toLowerCase());
@@ -40,7 +87,7 @@ export default function EmployeesPage() {
     }
   };
 
-  const handleAddEmployee = () => {
+  const handleAddEmployee = async () => {
     if (!newEmp.fullName || !newEmp.nik || !newEmp.email || !newEmp.departmentId || !newEmp.positionId) {
       addToast('Please fill in all required fields (Name, NIK, Email, Department, Position)', 'error');
       return;
@@ -49,34 +96,140 @@ export default function EmployeesPage() {
       addToast('An employee with this NIK already exists', 'error');
       return;
     }
+
     const empCode = `EMP-${String(employees.length + 1).padStart(3, '0')}`;
-    const employee: Employee = {
-      id: 'e' + Date.now(),
-      employeeCode: empCode,
-      fullName: newEmp.fullName,
-      preferredName: newEmp.preferredName || undefined,
+    const employeeData = {
+      employee_code: empCode,
+      full_name: newEmp.fullName,
+      preferred_name: newEmp.preferredName || undefined,
       nik: newEmp.nik,
       npwp: newEmp.npwp || undefined,
-      dateOfBirth: newEmp.dateOfBirth,
+      date_of_birth: newEmp.dateOfBirth,
       gender: newEmp.gender,
       phone: newEmp.phone,
       email: newEmp.email,
       address: newEmp.address,
-      emergencyContactName: newEmp.emergencyContactName,
-      emergencyContactPhone: newEmp.emergencyContactPhone,
-      departmentId: newEmp.departmentId,
-      positionId: newEmp.positionId,
-      employmentStatus: newEmp.employmentStatus,
-      joinDate: newEmp.joinDate || new Date().toISOString().split('T')[0],
-      bankName: newEmp.bankName || undefined,
-      bankAccountNumber: newEmp.bankAccountNumber || undefined,
-      bankAccountName: newEmp.bankAccountName || undefined,
+      emergency_contact_name: newEmp.emergencyContactName,
+      emergency_contact_phone: newEmp.emergencyContactPhone,
+      department_id: newEmp.departmentId,
+      position_id: newEmp.positionId,
+      employment_status: newEmp.employmentStatus,
+      join_date: newEmp.joinDate || new Date().toISOString().split('T')[0],
+      bank_name: newEmp.bankName || undefined,
+      bank_account_number: newEmp.bankAccountNumber || undefined,
+      bank_account_name: newEmp.bankAccountName || undefined,
     };
-    setEmployees(prev => [...prev, employee]);
-    addAuditLog('CREATE', 'Employee', employee.id, `${employee.fullName} created`);
-    addToast(`Employee ${employee.fullName} (${empCode}) created successfully`, 'success');
-    setShowAddModal(false);
-    setNewEmp({ fullName: '', preferredName: '', nik: '', npwp: '', dateOfBirth: '', gender: 'M', phone: '', email: '', address: '', emergencyContactName: '', emergencyContactPhone: '', departmentId: '', positionId: '', employmentStatus: 'ACTIVE', joinDate: '', bankName: '', bankAccountNumber: '', bankAccountName: '' });
+
+    try {
+      if (isApiAvailable()) {
+        // Use API
+        const created = await employeesApi.create(employeeData);
+        const newEmployee: Employee = {
+          id: created.id,
+          employeeCode: created.employee_code,
+          fullName: created.full_name,
+          preferredName: created.preferred_name,
+          nik: created.nik,
+          npwp: created.npwp,
+          dateOfBirth: created.date_of_birth,
+          gender: created.gender,
+          phone: created.phone,
+          email: created.email,
+          address: created.address,
+          emergencyContactName: created.emergency_contact_name,
+          emergencyContactPhone: created.emergency_contact_phone,
+          departmentId: created.department_id,
+          positionId: created.position_id,
+          employmentStatus: created.employment_status,
+          joinDate: created.join_date,
+          bankName: created.bank_name,
+          bankAccountNumber: created.bank_account_number,
+          bankAccountName: created.bank_account_name,
+        };
+        setLocalEmployees(prev => [...prev, newEmployee]);
+        setEmployees(prev => [...prev, newEmployee]);
+        addAuditLog('CREATE', 'Employee', newEmployee.id, `${newEmployee.fullName} created`);
+        addToast(`Employee ${newEmployee.fullName} (${empCode}) created successfully`, 'success');
+      } else {
+        // Use mock data
+        const employee: Employee = {
+          id: 'e' + Date.now(),
+          employeeCode: empCode,
+          fullName: newEmp.fullName,
+          preferredName: newEmp.preferredName || undefined,
+          nik: newEmp.nik,
+          npwp: newEmp.npwp || undefined,
+          dateOfBirth: newEmp.dateOfBirth,
+          gender: newEmp.gender,
+          phone: newEmp.phone,
+          email: newEmp.email,
+          address: newEmp.address,
+          emergencyContactName: newEmp.emergencyContactName,
+          emergencyContactPhone: newEmp.emergencyContactPhone,
+          departmentId: newEmp.departmentId,
+          positionId: newEmp.positionId,
+          employmentStatus: newEmp.employmentStatus,
+          joinDate: newEmp.joinDate || new Date().toISOString().split('T')[0],
+          bankName: newEmp.bankName || undefined,
+          bankAccountNumber: newEmp.bankAccountNumber || undefined,
+          bankAccountName: newEmp.bankAccountName || undefined,
+        };
+        setLocalEmployees(prev => [...prev, employee]);
+        setEmployees(prev => [...prev, employee]);
+        addAuditLog('CREATE', 'Employee', employee.id, `${employee.fullName} created`);
+        addToast(`Employee ${employee.fullName} (${empCode}) created successfully`, 'success');
+      }
+      
+      setShowAddModal(false);
+      setNewEmp({
+        fullName: '', preferredName: '', nik: '', npwp: '', dateOfBirth: '', gender: 'M',
+        phone: '', email: '', address: '', emergencyContactName: '', emergencyContactPhone: '',
+        departmentId: '', positionId: '', employmentStatus: 'ACTIVE', joinDate: '',
+        bankName: '', bankAccountNumber: '', bankAccountName: '',
+      });
+    } catch (error: any) {
+      addToast(`Failed to create employee: ${error.message}`, 'error');
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (isApiAvailable()) {
+      setLoading(true);
+      try {
+        const data = await employeesApi.getAll();
+        const transformed = data.map((emp: any) => ({
+          id: emp.id,
+          employeeCode: emp.employee_code,
+          fullName: emp.full_name,
+          preferredName: emp.preferred_name,
+          nik: emp.nik,
+          npwp: emp.npwp,
+          dateOfBirth: emp.date_of_birth,
+          gender: emp.gender,
+          phone: emp.phone,
+          email: emp.email,
+          address: emp.address,
+          emergencyContactName: emp.emergency_contact_name,
+          emergencyContactPhone: emp.emergency_contact_phone,
+          departmentId: emp.department_id,
+          positionId: emp.position_id,
+          employmentStatus: emp.employment_status,
+          joinDate: emp.join_date,
+          bankName: emp.bank_name,
+          bankAccountNumber: emp.bank_account_number,
+          bankAccountName: emp.bank_account_name,
+        }));
+        setLocalEmployees(transformed);
+        setEmployees(transformed);
+        addToast('Employee list refreshed from database', 'success');
+      } catch (error) {
+        addToast('Failed to refresh employee list', 'error');
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      addToast('Backend not running. Using demo data.', 'info');
+    }
   };
 
   if (selectedEmployee) {
@@ -161,9 +314,18 @@ export default function EmployeesPage() {
           <h1 className="text-2xl font-bold text-slate-800">Employees</h1>
           <p className="text-slate-500 text-sm mt-1">{filtered.length} employees found</p>
         </div>
-        <button onClick={() => setShowAddModal(true)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium">
-          <Plus size={16} /> Add Employee
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={handleRefresh}
+            disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors text-sm font-medium disabled:opacity-50"
+          >
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Refresh
+          </button>
+          <button onClick={() => setShowAddModal(true)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium">
+            <Plus size={16} /> Add Employee
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 p-4">
