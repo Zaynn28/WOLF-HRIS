@@ -1,4 +1,4 @@
-import { Employee, Department, Position, Shift, Attendance, LeaveType, LeaveRequest, OvertimeRequest, PayrollPeriod, PayrollRecord, EmployeeDocument, AuditLog, Notification } from '../types';
+import { Employee, Department, Position, Shift, Attendance, LeaveRequest, OvertimeRequest, PayrollPeriod, PayrollRecord, EmployeeDocument, AuditLog, Notification, LeaveType } from '../types';
 
 export const departments: Department[] = [
   { id: '550e8400-e29b-41d4-a716-446655440001', code: 'F&B', name: 'Food & Beverage', description: 'Restaurant, bar, and banquet operations', isActive: true },
@@ -57,79 +57,79 @@ export const leaveTypes: LeaveType[] = [
 const today = new Date().toISOString().split('T')[0];
 
 export const attendance: Attendance[] = [
-  { id: 'a1', employeeId: 'e1', attendanceDate: today, shiftId: 's1', clockIn: '05:55', clockOut: '14:35', status: 'PRESENT', lateMinutes: 0 },
-  { id: 'a2', employeeId: 'e2', attendanceDate: today, shiftId: 's4', clockIn: '08:15', clockOut: undefined, status: 'LATE', lateMinutes: 15 },
-  { id: 'a3', employeeId: 'e3', attendanceDate: today, shiftId: 's4', clockIn: '07:50', clockOut: undefined, status: 'PRESENT' },
-  { id: 'a4', employeeId: 'e4', attendanceDate: today, shiftId: 's2', clockIn: undefined, clockOut: undefined, status: 'ABSENT' },
-  { id: 'a5', employeeId: 'e5', attendanceDate: today, shiftId: 's1', clockIn: '06:00', clockOut: undefined, status: 'PRESENT' },
-  { id: 'a6', employeeId: 'e6', attendanceDate: today, shiftId: 's1', clockIn: '05:58', clockOut: undefined, status: 'PRESENT' },
-  { id: 'a7', employeeId: 'e7', attendanceDate: today, shiftId: 's3', clockIn: undefined, clockOut: undefined, status: 'REST_DAY' },
-  { id: 'a8', employeeId: 'e8', attendanceDate: today, shiftId: 's2', clockIn: '13:55', clockOut: undefined, status: 'PRESENT' },
-  { id: 'a9', employeeId: 'e9', attendanceDate: today, shiftId: 's4', clockIn: '08:00', clockOut: undefined, status: 'PRESENT' },
-  { id: 'a10', employeeId: 'e10', attendanceDate: today, shiftId: 's4', clockIn: '08:05', clockOut: undefined, status: 'PRESENT' },
-  { id: 'a11', employeeId: 'e11', attendanceDate: today, shiftId: 's1', clockIn: '06:10', clockOut: undefined, status: 'LATE', lateMinutes: 10 },
-  { id: 'a12', employeeId: 'e12', attendanceDate: today, shiftId: 's1', clockIn: undefined, clockOut: undefined, status: 'ON_LEAVE' },
+  { id: 'a1', employeeId: '550e8400-e29b-41d4-a716-446655440101', attendanceDate: today, shiftId: 's1', clockIn: '05:55', clockOut: '14:35', status: 'PRESENT', lateMinutes: 0 },
+  { id: 'a2', employeeId: '550e8400-e29b-41d4-a716-446655440102', attendanceDate: today, shiftId: 's4', clockIn: '08:15', clockOut: undefined, status: 'LATE', lateMinutes: 15 },
+  { id: 'a3', employeeId: '550e8400-e29b-41d4-a716-446655440103', attendanceDate: today, shiftId: 's4', clockIn: '07:50', clockOut: undefined, status: 'PRESENT' },
+  { id: 'a4', employeeId: '550e8400-e29b-41d4-a716-446655440104', attendanceDate: today, shiftId: 's2', clockIn: undefined, clockOut: undefined, status: 'ABSENT' },
+  { id: 'a5', employeeId: '550e8400-e29b-41d4-a716-446655440105', attendanceDate: today, shiftId: 's1', clockIn: '06:00', clockOut: undefined, status: 'PRESENT' },
+  { id: 'a6', employeeId: '550e8400-e29b-41d4-a716-446655440106', attendanceDate: today, shiftId: 's1', clockIn: '05:58', clockOut: undefined, status: 'PRESENT' },
+  { id: 'a7', employeeId: '550e8400-e29b-41d4-a716-446655440107', attendanceDate: today, shiftId: 's3', clockIn: undefined, clockOut: undefined, status: 'REST_DAY' },
+  { id: 'a8', employeeId: '550e8400-e29b-41d4-a716-446655440108', attendanceDate: today, shiftId: 's2', clockIn: '13:55', clockOut: undefined, status: 'PRESENT' },
+  { id: 'a9', employeeId: '550e8400-e29b-41d4-a716-446655440109', attendanceDate: today, shiftId: 's4', clockIn: '08:00', clockOut: undefined, status: 'PRESENT' },
+  { id: 'a10', employeeId: '550e8400-e29b-41d4-a716-446655440110', attendanceDate: today, shiftId: 's4', clockIn: '08:05', clockOut: undefined, status: 'PRESENT' },
+  { id: 'a11', employeeId: '550e8400-e29b-41d4-a716-446655440111', attendanceDate: today, shiftId: 's1', clockIn: '06:10', clockOut: undefined, status: 'LATE', lateMinutes: 10 },
+  { id: 'a12', employeeId: '550e8400-e29b-41d4-a716-446655440112', attendanceDate: today, shiftId: 's1', clockIn: undefined, clockOut: undefined, status: 'ON_LEAVE' },
 ];
 
 export const leaveRequests: LeaveRequest[] = [
-  { id: 'lr1', employeeId: 'e4', leaveTypeId: 'lt1', startDate: '2026-01-20', endDate: '2026-01-22', totalDays: 3, reason: 'Family vacation', status: 'PENDING', submittedAt: '2026-01-10T08:00:00Z' },
-  { id: 'lr2', employeeId: 'e12', leaveTypeId: 'lt2', startDate: '2026-01-13', endDate: '2026-01-17', totalDays: 5, reason: 'Medical treatment', status: 'APPROVED', submittedAt: '2026-01-08T09:00:00Z', approvedBy: 'e2', approvedAt: '2026-01-09T10:00:00Z' },
-  { id: 'lr3', employeeId: 'e6', leaveTypeId: 'lt1', startDate: '2026-01-25', endDate: '2026-01-26', totalDays: 2, reason: 'Personal matters', status: 'PENDING', submittedAt: '2026-01-12T14:00:00Z' },
-  { id: 'lr4', employeeId: 'e11', leaveTypeId: 'lt5', startDate: '2026-01-15', endDate: '2026-01-15', totalDays: 1, reason: 'Family bereavement', status: 'APPROVED', submittedAt: '2026-01-14T07:00:00Z', approvedBy: 'e1', approvedAt: '2026-01-14T08:00:00Z' },
-  { id: 'lr5', employeeId: 'e8', leaveTypeId: 'lt1', startDate: '2026-02-01', endDate: '2026-02-03', totalDays: 3, reason: 'Holiday trip', status: 'PENDING', submittedAt: '2026-01-13T11:00:00Z' },
+  { id: 'lr1', employeeId: '550e8400-e29b-41d4-a716-446655440104', leaveTypeId: 'lt1', startDate: '2026-01-20', endDate: '2026-01-22', totalDays: 3, reason: 'Family vacation', status: 'PENDING', submittedAt: '2026-01-10T08:00:00Z' },
+  { id: 'lr2', employeeId: '550e8400-e29b-41d4-a716-446655440112', leaveTypeId: 'lt2', startDate: '2026-01-13', endDate: '2026-01-17', totalDays: 5, reason: 'Medical treatment', status: 'APPROVED', submittedAt: '2026-01-08T09:00:00Z', approvedBy: '550e8400-e29b-41d4-a716-446655440102', approvedAt: '2026-01-09T10:00:00Z' },
+  { id: 'lr3', employeeId: '550e8400-e29b-41d4-a716-446655440106', leaveTypeId: 'lt1', startDate: '2026-01-25', endDate: '2026-01-26', totalDays: 2, reason: 'Personal matters', status: 'PENDING', submittedAt: '2026-01-12T14:00:00Z' },
+  { id: 'lr4', employeeId: '550e8400-e29b-41d4-a716-446655440111', leaveTypeId: 'lt5', startDate: '2026-01-15', endDate: '2026-01-15', totalDays: 1, reason: 'Family bereavement', status: 'APPROVED', submittedAt: '2026-01-14T07:00:00Z', approvedBy: '550e8400-e29b-41d4-a716-446655440101', approvedAt: '2026-01-14T08:00:00Z' },
+  { id: 'lr5', employeeId: '550e8400-e29b-41d4-a716-446655440108', leaveTypeId: 'lt1', startDate: '2026-02-01', endDate: '2026-02-03', totalDays: 3, reason: 'Holiday trip', status: 'PENDING', submittedAt: '2026-01-13T11:00:00Z' },
 ];
 
 export const overtimeRequests: OvertimeRequest[] = [
-  { id: 'ot1', employeeId: 'e4', date: '2026-01-12', startTime: '14:30', endTime: '18:30', totalMinutes: 240, reason: 'Event coverage - banquet', status: 'APPROVED', requestedBy: 'e1', approvedBy: 'e1', approvedAt: '2026-01-11T16:00:00Z' },
-  { id: 'ot2', employeeId: 'e11', date: '2026-01-13', startTime: '14:30', endTime: '17:30', totalMinutes: 180, reason: 'VIP dinner service', status: 'PENDING', requestedBy: 'e1' },
-  { id: 'ot3', employeeId: 'e5', date: '2026-01-11', startTime: '14:30', endTime: '20:30', totalMinutes: 360, reason: 'Emergency AC repair', status: 'APPROVED', requestedBy: 'e5', approvedBy: 'e3', approvedAt: '2026-01-11T08:00:00Z' },
-  { id: 'ot4', employeeId: 'e6', date: '2026-01-14', startTime: '14:30', endTime: '16:30', totalMinutes: 120, reason: 'Deep cleaning - floor 5-8', status: 'PENDING', requestedBy: 'e2' },
+  { id: 'ot1', employeeId: '550e8400-e29b-41d4-a716-446655440104', date: '2026-01-12', startTime: '14:30', endTime: '18:30', totalMinutes: 240, reason: 'Event coverage - banquet', status: 'APPROVED', requestedBy: '550e8400-e29b-41d4-a716-446655440101', approvedBy: '550e8400-e29b-41d4-a716-446655440101', approvedAt: '2026-01-11T16:00:00Z' },
+  { id: 'ot2', employeeId: '550e8400-e29b-41d4-a716-446655440111', date: '2026-01-13', startTime: '14:30', endTime: '17:30', totalMinutes: 180, reason: 'VIP dinner service', status: 'PENDING', requestedBy: '550e8400-e29b-41d4-a716-446655440101' },
+  { id: 'ot3', employeeId: '550e8400-e29b-41d4-a716-446655440105', date: '2026-01-11', startTime: '14:30', endTime: '20:30', totalMinutes: 360, reason: 'Emergency AC repair', status: 'APPROVED', requestedBy: '550e8400-e29b-41d4-a716-446655440105', approvedBy: '550e8400-e29b-41d4-a716-446655440103', approvedAt: '2026-01-11T08:00:00Z' },
+  { id: 'ot4', employeeId: '550e8400-e29b-41d4-a716-446655440106', date: '2026-01-14', startTime: '14:30', endTime: '16:30', totalMinutes: 120, reason: 'Deep cleaning - floor 5-8', status: 'PENDING', requestedBy: '550e8400-e29b-41d4-a716-446655440102' },
 ];
 
 export const payrollPeriods: PayrollPeriod[] = [
-  { id: 'pp1', periodCode: '2025-12', startDate: '2025-12-01', endDate: '2025-12-31', payDate: '2026-01-05', status: 'FINALIZED', createdBy: 'e9', approvedBy: 'e9', finalizedAt: '2026-01-03T10:00:00Z' },
-  { id: 'pp2', periodCode: '2026-01', startDate: '2026-01-01', endDate: '2026-01-31', payDate: '2026-02-05', status: 'CALCULATED', createdBy: 'e9' },
+  { id: 'pp1', periodCode: '2025-12', startDate: '2025-12-01', endDate: '2025-12-31', payDate: '2026-01-05', status: 'FINALIZED', createdBy: '550e8400-e29b-41d4-a716-446655440109', approvedBy: '550e8400-e29b-41d4-a716-446655440109', finalizedAt: '2026-01-03T10:00:00Z' },
+  { id: 'pp2', periodCode: '2026-01', startDate: '2026-01-01', endDate: '2026-01-31', payDate: '2026-02-05', status: 'CALCULATED', createdBy: '550e8400-e29b-41d4-a716-446655440109' },
 ];
 
 export const payrollRecords: PayrollRecord[] = [
-  { id: 'pr1', payrollPeriodId: 'pp2', employeeId: 'e1', grossPay: 12500000, totalDeductions: 1875000, netPay: 10625000, status: 'CALCULATED' },
-  { id: 'pr2', payrollPeriodId: 'pp2', employeeId: 'e2', grossPay: 9800000, totalDeductions: 1470000, netPay: 8330000, status: 'CALCULATED' },
-  { id: 'pr3', payrollPeriodId: 'pp2', employeeId: 'e3', grossPay: 14200000, totalDeductions: 2130000, netPay: 12070000, status: 'CALCULATED' },
-  { id: 'pr4', payrollPeriodId: 'pp2', employeeId: 'e4', grossPay: 5500000, totalDeductions: 825000, netPay: 4675000, status: 'CALCULATED' },
-  { id: 'pr5', payrollPeriodId: 'pp2', employeeId: 'e5', grossPay: 7200000, totalDeductions: 1080000, netPay: 6120000, status: 'CALCULATED' },
-  { id: 'pr6', payrollPeriodId: 'pp2', employeeId: 'e6', grossPay: 5200000, totalDeductions: 780000, netPay: 4420000, status: 'CALCULATED' },
-  { id: 'pr7', payrollPeriodId: 'pp2', employeeId: 'e7', grossPay: 5800000, totalDeductions: 870000, netPay: 4930000, status: 'CALCULATED' },
-  { id: 'pr8', payrollPeriodId: 'pp2', employeeId: 'e8', grossPay: 5400000, totalDeductions: 810000, netPay: 4590000, status: 'CALCULATED' },
-  { id: 'pr9', payrollPeriodId: 'pp2', employeeId: 'e9', grossPay: 8500000, totalDeductions: 1275000, netPay: 7225000, status: 'CALCULATED' },
-  { id: 'pr10', payrollPeriodId: 'pp2', employeeId: 'e10', grossPay: 5000000, totalDeductions: 750000, netPay: 4250000, status: 'CALCULATED' },
-  { id: 'pr11', payrollPeriodId: 'pp2', employeeId: 'e11', grossPay: 5500000, totalDeductions: 825000, netPay: 4675000, status: 'CALCULATED' },
-  { id: 'pr12', payrollPeriodId: 'pp2', employeeId: 'e12', grossPay: 5200000, totalDeductions: 780000, netPay: 4420000, status: 'CALCULATED' },
+  { id: 'pr1', payrollPeriodId: 'pp2', employeeId: '550e8400-e29b-41d4-a716-446655440101', grossPay: 12500000, totalDeductions: 1875000, netPay: 10625000, status: 'CALCULATED' },
+  { id: 'pr2', payrollPeriodId: 'pp2', employeeId: '550e8400-e29b-41d4-a716-446655440102', grossPay: 9800000, totalDeductions: 1470000, netPay: 8330000, status: 'CALCULATED' },
+  { id: 'pr3', payrollPeriodId: 'pp2', employeeId: '550e8400-e29b-41d4-a716-446655440103', grossPay: 14200000, totalDeductions: 2130000, netPay: 12070000, status: 'CALCULATED' },
+  { id: 'pr4', payrollPeriodId: 'pp2', employeeId: '550e8400-e29b-41d4-a716-446655440104', grossPay: 5500000, totalDeductions: 825000, netPay: 4675000, status: 'CALCULATED' },
+  { id: 'pr5', payrollPeriodId: 'pp2', employeeId: '550e8400-e29b-41d4-a716-446655440105', grossPay: 7200000, totalDeductions: 1080000, netPay: 6120000, status: 'CALCULATED' },
+  { id: 'pr6', payrollPeriodId: 'pp2', employeeId: '550e8400-e29b-41d4-a716-446655440106', grossPay: 5200000, totalDeductions: 780000, netPay: 4420000, status: 'CALCULATED' },
+  { id: 'pr7', payrollPeriodId: 'pp2', employeeId: '550e8400-e29b-41d4-a716-446655440107', grossPay: 5800000, totalDeductions: 870000, netPay: 4930000, status: 'CALCULATED' },
+  { id: 'pr8', payrollPeriodId: 'pp2', employeeId: '550e8400-e29b-41d4-a716-446655440108', grossPay: 5400000, totalDeductions: 810000, netPay: 4590000, status: 'CALCULATED' },
+  { id: 'pr9', payrollPeriodId: 'pp2', employeeId: '550e8400-e29b-41d4-a716-446655440109', grossPay: 8500000, totalDeductions: 1275000, netPay: 7225000, status: 'CALCULATED' },
+  { id: 'pr10', payrollPeriodId: 'pp2', employeeId: '550e8400-e29b-41d4-a716-446655440110', grossPay: 5000000, totalDeductions: 750000, netPay: 4250000, status: 'CALCULATED' },
+  { id: 'pr11', payrollPeriodId: 'pp2', employeeId: '550e8400-e29b-41d4-a716-446655440111', grossPay: 5500000, totalDeductions: 825000, netPay: 4675000, status: 'CALCULATED' },
+  { id: 'pr12', payrollPeriodId: 'pp2', employeeId: '550e8400-e29b-41d4-a716-446655440112', grossPay: 5200000, totalDeductions: 780000, netPay: 4420000, status: 'CALCULATED' },
 ];
 
 export const documents: EmployeeDocument[] = [
-  { id: 'doc1', employeeId: 'e1', documentTypeName: 'KTP', fileName: 'ktp_ahmad_wijaya.pdf', fileSize: 245000, issueDate: '2020-01-15', expiryDate: '2030-01-15', verificationStatus: 'VERIFIED', uploadedAt: '2020-03-01T08:00:00Z' },
-  { id: 'doc2', employeeId: 'e1', documentTypeName: 'NPWP', fileName: 'npwp_ahmad_wijaya.pdf', fileSize: 180000, verificationStatus: 'VERIFIED', uploadedAt: '2020-03-01T08:05:00Z' },
-  { id: 'doc3', employeeId: 'e1', documentTypeName: 'Employment Contract', fileName: 'contract_ahmad_wijaya.pdf', fileSize: 520000, issueDate: '2020-03-01', expiryDate: '2026-02-28', verificationStatus: 'VERIFIED', uploadedAt: '2020-03-01T08:10:00Z' },
-  { id: 'doc4', employeeId: 'e2', documentTypeName: 'KTP', fileName: 'ktp_dewi_lestari.pdf', fileSize: 230000, verificationStatus: 'VERIFIED', uploadedAt: '2019-07-15T09:00:00Z' },
-  { id: 'doc5', employeeId: 'e10', documentTypeName: 'KTP', fileName: 'ktp_maya_anggraini.pdf', fileSize: 210000, verificationStatus: 'PENDING', uploadedAt: '2025-11-01T10:00:00Z' },
-  { id: 'doc6', employeeId: 'e10', documentTypeName: 'BPJS Kesehatan', fileName: 'bpjs_maya.pdf', fileSize: 150000, verificationStatus: 'PENDING', uploadedAt: '2025-11-01T10:05:00Z' },
-  { id: 'doc7', employeeId: 'e4', documentTypeName: 'Employment Contract', fileName: 'contract_sari_rahayu.pdf', fileSize: 480000, issueDate: '2022-06-01', expiryDate: '2026-05-31', verificationStatus: 'VERIFIED', uploadedAt: '2022-06-01T08:00:00Z' },
+  { id: 'doc1', employeeId: '550e8400-e29b-41d4-a716-446655440101', documentTypeName: 'KTP', fileName: 'ktp_ahmad_wijaya.pdf', fileSize: 245000, issueDate: '2020-01-15', expiryDate: '2030-01-15', verificationStatus: 'VERIFIED', uploadedAt: '2020-03-01T08:00:00Z' },
+  { id: 'doc2', employeeId: '550e8400-e29b-41d4-a716-446655440101', documentTypeName: 'NPWP', fileName: 'npwp_ahmad_wijaya.pdf', fileSize: 180000, verificationStatus: 'VERIFIED', uploadedAt: '2020-03-01T08:05:00Z' },
+  { id: 'doc3', employeeId: '550e8400-e29b-41d4-a716-446655440101', documentTypeName: 'Employment Contract', fileName: 'contract_ahmad_wijaya.pdf', fileSize: 520000, issueDate: '2020-03-01', expiryDate: '2026-02-28', verificationStatus: 'VERIFIED', uploadedAt: '2020-03-01T08:10:00Z' },
+  { id: 'doc4', employeeId: '550e8400-e29b-41d4-a716-446655440102', documentTypeName: 'KTP', fileName: 'ktp_dewi_lestari.pdf', fileSize: 230000, verificationStatus: 'VERIFIED', uploadedAt: '2019-07-15T09:00:00Z' },
+  { id: 'doc5', employeeId: '550e8400-e29b-41d4-a716-446655440110', documentTypeName: 'KTP', fileName: 'ktp_maya_anggraini.pdf', fileSize: 210000, verificationStatus: 'PENDING', uploadedAt: '2025-11-01T10:00:00Z' },
+  { id: 'doc6', employeeId: '550e8400-e29b-41d4-a716-446655440110', documentTypeName: 'BPJS Kesehatan', fileName: 'bpjs_maya.pdf', fileSize: 150000, verificationStatus: 'PENDING', uploadedAt: '2025-11-01T10:05:00Z' },
+  { id: 'doc7', employeeId: '550e8400-e29b-41d4-a716-446655440104', documentTypeName: 'Employment Contract', fileName: 'contract_sari_rahayu.pdf', fileSize: 480000, issueDate: '2022-06-01', expiryDate: '2026-05-31', verificationStatus: 'VERIFIED', uploadedAt: '2022-06-01T08:00:00Z' },
 ];
 
 export const auditLogs: AuditLog[] = [
-  { id: 'al1', userId: 'u1', userName: 'Admin HR', action: 'CREATE', entityType: 'Employee', entityId: 'e10', newValue: 'Maya Anggraini created', createdAt: '2025-11-01T10:00:00Z', ipAddress: '192.168.1.10' },
+  { id: 'al1', userId: 'u1', userName: 'Admin HR', action: 'CREATE', entityType: 'Employee', entityId: '550e8400-e29b-41d4-a716-446655440110', newValue: 'Maya Anggraini created', createdAt: '2025-11-01T10:00:00Z', ipAddress: '192.168.1.10' },
   { id: 'al2', userId: 'u1', userName: 'Admin HR', action: 'APPROVE', entityType: 'LeaveRequest', entityId: 'lr2', newValue: 'Approved by Dewi Lestari', createdAt: '2026-01-09T10:00:00Z', ipAddress: '192.168.1.10' },
   { id: 'al3', userId: 'u2', userName: 'Payroll Staff', action: 'CALCULATE', entityType: 'PayrollPeriod', entityId: 'pp2', newValue: 'Payroll 2026-01 calculated', createdAt: '2026-01-12T14:00:00Z', ipAddress: '192.168.1.15' },
-  { id: 'al4', userId: 'u1', userName: 'Admin HR', action: 'UPDATE', entityType: 'Employee', entityId: 'e4', oldValue: 'Status: ACTIVE', newValue: 'Status: ACTIVE, Bank updated', createdAt: '2026-01-10T11:00:00Z', ipAddress: '192.168.1.10' },
+  { id: 'al4', userId: 'u1', userName: 'Admin HR', action: 'UPDATE', entityType: 'Employee', entityId: '550e8400-e29b-41d4-a716-446655440104', oldValue: 'Status: ACTIVE', newValue: 'Status: ACTIVE, Bank updated', createdAt: '2026-01-10T11:00:00Z', ipAddress: '192.168.1.10' },
   { id: 'al5', userId: 'u1', userName: 'Admin HR', action: 'APPROVE', entityType: 'LeaveRequest', entityId: 'lr4', newValue: 'Approved by Ahmad Wijaya', createdAt: '2026-01-14T08:00:00Z', ipAddress: '192.168.1.10' },
-  { id: 'al6', userId: 'u3', userName: 'System', action: 'ALERT', entityType: 'Contract', entityId: 'e1', newValue: 'Contract expiring in 45 days', createdAt: '2026-01-14T06:00:00Z', ipAddress: 'system' },
+  { id: 'al6', userId: 'u3', userName: 'System', action: 'ALERT', entityType: 'Contract', entityId: '550e8400-e29b-41d4-a716-446655440101', newValue: 'Contract expiring in 45 days', createdAt: '2026-01-14T06:00:00Z', ipAddress: 'system' },
   { id: 'al7', userId: 'u2', userName: 'Payroll Staff', action: 'UPLOAD', entityType: 'Document', entityId: 'doc5', newValue: 'KTP uploaded for Maya Anggraini', createdAt: '2025-11-01T10:00:00Z', ipAddress: '192.168.1.15' },
   { id: 'al8', userId: 'u1', userName: 'Admin HR', action: 'FINALIZE', entityType: 'PayrollPeriod', entityId: 'pp1', newValue: 'Payroll 2025-12 finalized', createdAt: '2026-01-03T10:00:00Z', ipAddress: '192.168.1.10' },
 ];
 
 export const notifications: Notification[] = [
   { id: 'n1', type: 'PENDING_APPROVAL', title: 'Leave Request Pending', message: 'Sari Rahayu has submitted a leave request for Jan 20-22', createdAt: '2026-01-10T08:00:00Z' },
-  { id: 'n2', type: 'CONTRACT_EXPIRY', title: 'Contract Expiring Soon', message: 'Ahmad Wijaya\'s contract expires on Feb 28, 2026', createdAt: '2026-01-14T06:00:00Z' },
+  { id: 'n2', type: 'CONTRACT_EXPIRY', title: 'Contract Expiring Soon', message: 'Ahmad Wijaya contract expires on Feb 28, 2026', createdAt: '2026-01-14T06:00:00Z' },
   { id: 'n3', type: 'PAYSLIP_AVAILABLE', title: 'Payslip Available', message: 'Your December 2025 payslip is now available', createdAt: '2026-01-05T09:00:00Z' },
   { id: 'n4', type: 'PENDING_APPROVAL', title: 'Overtime Request', message: 'Fajar Nugroho has an overtime request pending approval', createdAt: '2026-01-13T09:00:00Z' },
   { id: 'n5', type: 'LEAVE_APPROVED', title: 'Leave Approved', message: 'Your compassionate leave for Jan 15 has been approved', createdAt: '2026-01-14T08:00:00Z' },
