@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { 
   LayoutDashboard, Users, Clock, CalendarDays, DollarSign, FileText, 
   BarChart3, Bot, Shield, Settings, ChevronLeft, ChevronRight, 
-  Building2, Briefcase, LogOut, Menu
+  Building2, Briefcase, LogOut, Menu, Database
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -56,6 +56,7 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
     { id: 'ai-assistant', label: 'AI Assistant', icon: <Bot size={20} /> },
     { id: 'audit', label: 'Controls & Audit', icon: <Shield size={20} /> },
     { id: 'configuration', label: 'Configuration', icon: <Settings size={20} /> },
+    { id: 'database', label: 'Database (Sheets)', icon: <Database size={20} /> },
   ];
 
   const isActive = (id: string) => currentPage === id;

@@ -16,6 +16,7 @@ import ReportsPage from './pages/ReportsPage';
 import AIAssistantPage from './pages/AIAssistantPage';
 import AuditPage from './pages/AuditPage';
 import ConfigurationPage from './pages/ConfigurationPage';
+import GoogleSheetsSettings from './pages/GoogleSheetsSettings';
 import { Search, ChevronDown } from 'lucide-react';
 
 function AppContent() {
@@ -45,6 +46,7 @@ function AppContent() {
       case 'ai-assistant': return <AIAssistantPage />;
       case 'audit': return <AuditPage />;
       case 'configuration': return <ConfigurationPage />;
+      case 'database': return <GoogleSheetsSettings />;
       default: return <Dashboard onNavigate={setCurrentPage} />;
     }
   };
@@ -68,6 +70,7 @@ function AppContent() {
       'ai-assistant': 'AI Assistant',
       'audit': 'Controls & Audit',
       'configuration': 'Configuration',
+      'database': 'Database (Google Sheets)',
     };
     return titles[currentPage] || 'ATRIUM HRIS';
   };
