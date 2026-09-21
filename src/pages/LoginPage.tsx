@@ -105,7 +105,16 @@ export default function LoginPage() {
             {demoAccounts.map(acc => (
               <button
                 key={acc.email}
-                onClick={() => { setEmail(acc.email); setPassword(acc.password); setError(''); }}
+                onClick={() => {
+                  setEmail(acc.email);
+                  setPassword(acc.password);
+                  setError('');
+                  // Auto-submit after a brief delay
+                  setTimeout(() => {
+                    const form = document.querySelector('form');
+                    if (form) form.requestSubmit();
+                  }, 100);
+                }}
                 className="text-left p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
               >
                 <p className="text-xs text-white font-medium">{acc.role}</p>

@@ -1,10 +1,14 @@
 import { useState } from 'react';
-import { payrollPeriods, payrollRecords, employees, departments } from '../data/mockData';
-import { DollarSign, Lock, CheckCircle, FileText, ChevronDown, ChevronUp } from 'lucide-react';
+import { useApp } from '../context/AppContext';
+import { employees, departments } from '../data/mockData';
+import { FileText, ChevronDown, ChevronUp, Lock, CheckCircle, AlertTriangle } from 'lucide-react';
+import Modal from '../components/Modal';
 
 export default function PayrollPage() {
+  const { payrollPeriods, setPayrollPeriods, payrollRecords, addToast, addAuditLog, addNotification } = useApp();
   const [selectedPeriod, setSelectedPeriod] = useState(payrollPeriods.find(p => p.status !== 'FINALIZED' && p.status !== 'LOCKED')?.id || payrollPeriods[0]?.id);
   const [expandedRecord, setExpandedRecord] = useState<string | null>(null);
+  const [showConfirmModal, setShowConfirmModal] = useState<'review' | 'finalize' | null>(null);
 
   const period = payrollPeriods.find(p => p.id === selectedPeriod);
   const records = payrollRecords.filter(r => r.payrollPeriodId === selectedPeriod);
@@ -14,7 +18,6 @@ export default function PayrollPage() {
 
   const getEmp = (id: string) => employees.find(e => e.id === id);
   const getDept = (id: string) => departments.find(d => d.id === id)?.name || '-';
-
   const formatCurrency = (amount: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
 
   const statusColor = (status: string) => {
@@ -29,7 +32,22 @@ export default function PayrollPage() {
     }
   };
 
-  // Mock payroll breakdown
+  const handleSubmitForReview = () => {
+    setPayrollPeriods(prev => prev.map(p => p.id === selectedPeriod ? { ...p, status: 'UNDER_REVIEW' as const } : p));
+    addAuditLog('UPDATE', 'PayrollPeriod', selectedPeriod || '', 'Status changed to UNDER_REVIEW');
+    addNotification('GENERAL', 'Payroll Submitted', `Payroll ${period?.periodCode} submitted for review`);
+    addToast(`Payroll ${period?.periodCode} submitted for review`, 'success');
+    setShowConfirmModal(null);
+  };
+
+  const handleFinalize = () => {
+    setPayrollPeriods(prev => prev.map(p => p.id === selectedPeriod ? { ...p, status: 'FINALIZED' as const, finalizedAt: new Date().toISOString() } : p));
+    addAuditLog('FINALIZE', 'PayrollPeriod', selectedPeriod || '', `Payroll ${period?.periodCode} finalized`);
+    addNotification('PAYROLL_FINALIZED', 'Payroll Finalized', `Payroll ${period?.periodCode} has been finalized and locked`);
+    addToast(`Payroll ${period?.periodCode} finalized successfully. Records are now locked.`, 'success');
+    setShowConfirmModal(null);
+  };
+
   const getBreakdown = (record: typeof records[0]) => {
     const basicSalary = record.grossPay * 0.7;
     const allowance = record.grossPay * 0.15;
@@ -40,6 +58,8 @@ export default function PayrollPage() {
     return { basicSalary, allowance, overtime, serviceCharge, bpjs, tax };
   };
 
+  const isFinalized = period?.status === 'FINALIZED' || period?.status === 'LOCKED';
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -47,70 +67,54 @@ export default function PayrollPage() {
           <h1 className="text-2xl font-bold text-slate-800">Payroll</h1>
           <p className="text-slate-500 text-sm mt-1">Manage payroll periods and calculations</p>
         </div>
-        {period && period.status === 'CALCULATED' && (
+        {period && !isFinalized && (
           <div className="flex gap-2">
-            <button className="px-4 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-sm font-medium hover:bg-amber-100">
-              Submit for Review
-            </button>
-            <button className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">
-              Finalize Payroll
-            </button>
+            {period.status === 'CALCULATED' && (
+              <button onClick={() => setShowConfirmModal('review')} className="px-4 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-sm font-medium hover:bg-amber-100">
+                Submit for Review
+              </button>
+            )}
+            {(period.status === 'UNDER_REVIEW' || period.status === 'APPROVED') && (
+              <button onClick={() => setShowConfirmModal('finalize')} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">
+                Finalize Payroll
+              </button>
+            )}
           </div>
         )}
       </div>
 
-      {/* Period Selector */}
       <div className="flex gap-3 overflow-x-auto pb-2">
         {payrollPeriods.map(p => (
-          <button
-            key={p.id}
-            onClick={() => setSelectedPeriod(p.id)}
-            className={`flex-shrink-0 px-4 py-3 rounded-xl border text-sm transition-all ${
-              selectedPeriod === p.id
-                ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-            }`}
-          >
+          <button key={p.id} onClick={() => setSelectedPeriod(p.id)} className={`flex-shrink-0 px-4 py-3 rounded-xl border text-sm transition-all ${selectedPeriod === p.id ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
             <p className="font-medium">{p.periodCode}</p>
             <span className={`text-xs px-2 py-0.5 rounded mt-1 inline-block ${statusColor(p.status)}`}>{p.status}</span>
           </button>
         ))}
       </div>
 
-      {/* Period Summary */}
       {period && (
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <p className="text-sm text-slate-500">Period</p>
-            <p className="text-lg font-bold text-slate-800">{period.periodCode}</p>
-            <p className="text-xs text-slate-400">{period.startDate} to {period.endDate}</p>
-          </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <p className="text-sm text-slate-500">Total Gross</p>
-            <p className="text-lg font-bold text-slate-800">{formatCurrency(totalGross)}</p>
-            <p className="text-xs text-slate-400">{records.length} employees</p>
-          </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <p className="text-sm text-slate-500">Total Deductions</p>
-            <p className="text-lg font-bold text-red-600">{formatCurrency(totalDeductions)}</p>
-            <p className="text-xs text-slate-400">BPJS + Tax</p>
-          </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <p className="text-sm text-slate-500">Total Net Pay</p>
-            <p className="text-lg font-bold text-emerald-600">{formatCurrency(totalNet)}</p>
-            <p className="text-xs text-slate-400">Pay date: {period.payDate}</p>
+          <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Period</p><p className="text-lg font-bold text-slate-800">{period.periodCode}</p><p className="text-xs text-slate-400">{period.startDate} to {period.endDate}</p></div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Total Gross</p><p className="text-lg font-bold text-slate-800">{formatCurrency(totalGross)}</p><p className="text-xs text-slate-400">{records.length} employees</p></div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Total Deductions</p><p className="text-lg font-bold text-red-600">{formatCurrency(totalDeductions)}</p><p className="text-xs text-slate-400">BPJS + Tax</p></div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Total Net Pay</p><p className="text-lg font-bold text-emerald-600">{formatCurrency(totalNet)}</p><p className="text-xs text-slate-400">Pay date: {period.payDate}</p></div>
+        </div>
+      )}
+
+      {isFinalized && (
+        <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 flex items-start gap-3">
+          <Lock size={18} className="text-purple-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-purple-800">Payroll Locked</p>
+            <p className="text-sm text-purple-700">This payroll period has been finalized. Records cannot be modified. Any corrections require a new adjustment period.</p>
           </div>
         </div>
       )}
 
-      {/* Payroll Records */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
           <h3 className="font-semibold text-slate-800">Payroll Records</h3>
-          <div className="flex items-center gap-2 text-sm text-slate-500">
-            <FileText size={14} />
-            <span>{records.length} records</span>
-          </div>
+          <div className="flex items-center gap-2 text-sm text-slate-500"><FileText size={14} /><span>{records.length} records</span></div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -134,24 +138,15 @@ export default function PayrollPage() {
                     <tr key={record.id} className="hover:bg-slate-50">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 bg-indigo-100 rounded-full flex items-center justify-center text-xs font-bold text-indigo-600">
-                            {emp?.fullName.charAt(0)}
-                          </div>
-                          <div>
-                            <p className="text-sm font-medium text-slate-800">{emp?.fullName}</p>
-                            <p className="text-xs text-slate-500">{emp?.employeeCode}</p>
-                          </div>
+                          <div className="w-7 h-7 bg-indigo-100 rounded-full flex items-center justify-center text-xs font-bold text-indigo-600">{emp?.fullName.charAt(0)}</div>
+                          <div><p className="text-sm font-medium text-slate-800">{emp?.fullName}</p><p className="text-xs text-slate-500">{emp?.employeeCode}</p></div>
                         </div>
                       </td>
                       <td className="px-4 py-3 text-sm text-slate-600">{emp ? getDept(emp.departmentId) : '-'}</td>
                       <td className="px-4 py-3 text-sm text-right text-slate-800 font-medium">{formatCurrency(record.grossPay)}</td>
                       <td className="px-4 py-3 text-sm text-right text-red-600">{formatCurrency(record.totalDeductions)}</td>
                       <td className="px-4 py-3 text-sm text-right text-emerald-700 font-medium">{formatCurrency(record.netPay)}</td>
-                      <td className="px-4 py-3">
-                        <button onClick={() => setExpandedRecord(isExpanded ? null : record.id)} className="text-slate-400 hover:text-slate-600">
-                          {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                        </button>
-                      </td>
+                      <td className="px-4 py-3"><button onClick={() => setExpandedRecord(isExpanded ? null : record.id)} className="text-slate-400 hover:text-slate-600">{isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button></td>
                     </tr>
                     {isExpanded && (
                       <tr key={`${record.id}-detail`} className="bg-slate-50">
@@ -192,6 +187,40 @@ export default function PayrollPage() {
           </table>
         </div>
       </div>
+
+      {/* Confirmation Modals */}
+      <Modal isOpen={showConfirmModal === 'review'} onClose={() => setShowConfirmModal(null)} title="Submit for Review">
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 p-4 bg-amber-50 rounded-lg border border-amber-200">
+            <AlertTriangle size={20} className="text-amber-600 flex-shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-amber-800">Confirm Submission</p>
+              <p className="text-sm text-amber-700 mt-1">You are about to submit payroll period <strong>{period?.periodCode}</strong> for review. This will lock calculations and send it to the approval workflow.</p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-3">
+            <button onClick={() => setShowConfirmModal(null)} className="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
+            <button onClick={handleSubmitForReview} className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700">Submit for Review</button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={showConfirmModal === 'finalize'} onClose={() => setShowConfirmModal(null)} title="Finalize Payroll">
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 p-4 bg-red-50 rounded-lg border border-red-200">
+            <Lock size={20} className="text-red-600 flex-shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-red-800">Confirm Finalization</p>
+              <p className="text-sm text-red-700 mt-1">You are about to finalize payroll period <strong>{period?.periodCode}</strong>. <strong>This action cannot be undone.</strong> All records will be locked and payslips will be generated.</p>
+              <p className="text-sm text-red-700 mt-2">Total Net Pay: <strong>{formatCurrency(totalNet)}</strong> for {records.length} employees.</p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-3">
+            <button onClick={() => setShowConfirmModal(null)} className="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
+            <button onClick={handleFinalize} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Confirm Finalize</button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

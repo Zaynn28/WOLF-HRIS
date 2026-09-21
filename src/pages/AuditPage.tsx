@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { auditLogs } from '../data/mockData';
-import { Shield, Search, Filter, AlertTriangle } from 'lucide-react';
+import { useApp } from '../context/AppContext';
+import { Shield, Search, Filter, AlertTriangle, Download } from 'lucide-react';
 
 export default function AuditPage() {
+  const { auditLogs, addToast } = useApp();
   const [search, setSearch] = useState('');
   const [actionFilter, setActionFilter] = useState('');
 
@@ -30,11 +31,16 @@ export default function AuditPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-          <Shield size={24} className="text-indigo-600" /> Controls & Audit
-        </h1>
-        <p className="text-slate-500 text-sm mt-1">System activity log and compliance tracking</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+            <Shield size={24} className="text-indigo-600" /> Controls & Audit
+          </h1>
+          <p className="text-slate-500 text-sm mt-1">System activity log and compliance tracking</p>
+        </div>
+        <button onClick={() => addToast('Audit log exported successfully', 'success')} className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg hover:bg-emerald-100 text-sm font-medium">
+          <Download size={16} /> Export Log
+        </button>
       </div>
 
       {/* Summary */}

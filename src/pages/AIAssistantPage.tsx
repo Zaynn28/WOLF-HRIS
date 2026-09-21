@@ -176,7 +176,16 @@ export default function AIAssistantPage() {
               {quickQuestions.map(q => (
                 <button
                   key={q}
-                  onClick={() => { setInput(q); }}
+                  onClick={() => {
+                    const userMessage: AIMessage = { id: Date.now().toString(), role: 'user', content: q, timestamp: new Date().toISOString() };
+                    setMessages(prev => [...prev, userMessage]);
+                    setIsProcessing(true);
+                    setTimeout(() => {
+                      const response = processQuery(q);
+                      setMessages(prev => [...prev, response]);
+                      setIsProcessing(false);
+                    }, 800);
+                  }}
                   className="text-xs px-3 py-1.5 bg-slate-100 text-slate-600 rounded-full hover:bg-slate-200 transition-colors"
                 >
                   {q}

@@ -1,7 +1,11 @@
-import { employees, attendance, leaveRequests, overtimeRequests, payrollPeriods, documents } from '../data/mockData';
+import { useApp } from '../context/AppContext';
+import { employees, departments } from '../data/mockData';
 import { Users, UserCheck, UserX, CalendarClock, Clock, AlertTriangle, FileWarning, CheckCircle } from 'lucide-react';
 
-export default function Dashboard() {
+interface DashboardProps { onNavigate: (page: string) => void; }
+
+export default function Dashboard({ onNavigate }: DashboardProps) {
+  const { attendance, leaveRequests, overtimeRequests, payrollPeriods, documents } = useApp();
   const today = new Date().toISOString().split('T')[0];
   const todayAttendance = attendance.filter(a => a.attendanceDate === today);
   const presentToday = todayAttendance.filter(a => a.status === 'PRESENT' || a.status === 'LATE').length;
@@ -28,14 +32,14 @@ export default function Dashboard() {
   });
 
   const cards = [
-    { label: 'Total Employees', value: activeEmployees, sublabel: `${probationEmployees} on probation`, icon: <Users size={24} />, color: 'bg-blue-500' },
-    { label: 'Present Today', value: presentToday, sublabel: `of ${todayAttendance.length} scheduled`, icon: <UserCheck size={24} />, color: 'bg-emerald-500' },
-    { label: 'Absent Today', value: absentToday, sublabel: 'Without approved leave', icon: <UserX size={24} />, color: 'bg-red-500' },
-    { label: 'On Leave', value: onLeaveToday, sublabel: 'Approved leave today', icon: <CalendarClock size={24} />, color: 'bg-amber-500' },
-    { label: 'Late Today', value: lateToday, sublabel: 'Arrived after shift start', icon: <Clock size={24} />, color: 'bg-orange-500' },
-    { label: 'Pending Approvals', value: pendingLeave + pendingOvertime, sublabel: `${pendingLeave} leave, ${pendingOvertime} overtime`, icon: <AlertTriangle size={24} />, color: 'bg-purple-500' },
-    { label: 'Contracts Expiring', value: expiringContracts.length, sublabel: 'Within 60 days', icon: <FileWarning size={24} />, color: 'bg-rose-500' },
-    { label: 'Pending Documents', value: pendingDocs, sublabel: 'Awaiting verification', icon: <CheckCircle size={24} />, color: 'bg-teal-500' },
+    { label: 'Total Employees', value: activeEmployees, sublabel: `${probationEmployees} on probation`, icon: <Users size={24} />, color: 'bg-blue-500', page: 'employees' },
+    { label: 'Present Today', value: presentToday, sublabel: `of ${todayAttendance.length} scheduled`, icon: <UserCheck size={24} />, color: 'bg-emerald-500', page: 'daily-attendance' },
+    { label: 'Absent Today', value: absentToday, sublabel: 'Without approved leave', icon: <UserX size={24} />, color: 'bg-red-500', page: 'daily-attendance' },
+    { label: 'On Leave', value: onLeaveToday, sublabel: 'Approved leave today', icon: <CalendarClock size={24} />, color: 'bg-amber-500', page: 'leave' },
+    { label: 'Late Today', value: lateToday, sublabel: 'Arrived after shift start', icon: <Clock size={24} />, color: 'bg-orange-500', page: 'daily-attendance' },
+    { label: 'Pending Approvals', value: pendingLeave + pendingOvertime, sublabel: `${pendingLeave} leave, ${pendingOvertime} overtime`, icon: <AlertTriangle size={24} />, color: 'bg-purple-500', page: 'leave' },
+    { label: 'Contracts Expiring', value: expiringContracts.length, sublabel: 'Within 60 days', icon: <FileWarning size={24} />, color: 'bg-rose-500', page: 'documents' },
+    { label: 'Pending Documents', value: pendingDocs, sublabel: 'Awaiting verification', icon: <CheckCircle size={24} />, color: 'bg-teal-500', page: 'documents' },
   ];
 
   return (
@@ -45,27 +49,24 @@ export default function Dashboard() {
         <p className="text-slate-500 text-sm mt-1">Operational overview — {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
       </div>
 
-      {/* Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {cards.map((card, i) => (
-          <div key={i} className="bg-white rounded-xl border border-slate-200 p-5 hover:shadow-md transition-shadow">
+          <button key={i} onClick={() => onNavigate(card.page)} className="bg-white rounded-xl border border-slate-200 p-5 hover:shadow-md transition-all text-left hover:border-indigo-200 group">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-sm text-slate-500">{card.label}</p>
                 <p className="text-3xl font-bold text-slate-800 mt-1">{card.value}</p>
                 <p className="text-xs text-slate-400 mt-1">{card.sublabel}</p>
               </div>
-              <div className={`${card.color} p-2.5 rounded-lg text-white`}>
+              <div className={`${card.color} p-2.5 rounded-lg text-white group-hover:scale-110 transition-transform`}>
                 {card.icon}
               </div>
             </div>
-          </div>
+          </button>
         ))}
       </div>
 
-      {/* Payroll Status & Recent Activity */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Payroll Status */}
         <div className="bg-white rounded-xl border border-slate-200 p-6">
           <h3 className="font-semibold text-slate-800 mb-4">Payroll Status</h3>
           {currentPayroll ? (
@@ -92,13 +93,15 @@ export default function Dashboard() {
                 <span className="text-slate-500">Employees</span>
                 <span className="font-medium text-slate-700">{activeEmployees}</span>
               </div>
+              <button onClick={() => onNavigate('payroll-periods')} className="w-full mt-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
+                View Payroll Details
+              </button>
             </div>
           ) : (
             <p className="text-slate-500 text-sm">No active payroll period</p>
           )}
         </div>
 
-        {/* Pending Approvals */}
         <div className="bg-white rounded-xl border border-slate-200 p-6">
           <h3 className="font-semibold text-slate-800 mb-4">Pending Approvals</h3>
           <div className="space-y-3">
@@ -129,11 +132,15 @@ export default function Dashboard() {
             {pendingLeave + pendingOvertime === 0 && (
               <p className="text-slate-500 text-sm text-center py-4">No pending approvals</p>
             )}
+            {(pendingLeave + pendingOvertime) > 0 && (
+              <button onClick={() => onNavigate('leave')} className="w-full mt-2 px-4 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-sm font-medium hover:bg-amber-100 transition-colors">
+                View All Approvals
+              </button>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Contract Expiry Alerts */}
       {expiringContracts.length > 0 && (
         <div className="bg-white rounded-xl border border-slate-200 p-6">
           <h3 className="font-semibold text-slate-800 mb-4 flex items-center gap-2">
@@ -151,12 +158,10 @@ export default function Dashboard() {
                     </div>
                     <div>
                       <p className="text-sm font-medium text-slate-700">{emp.fullName}</p>
-                      <p className="text-xs text-slate-500">{emp.employeeCode} • {emp.employeeCode}</p>
+                      <p className="text-xs text-slate-500">{emp.employeeCode} • {departments.find(d => d.id === emp.departmentId)?.name}</p>
                     </div>
                   </div>
-                  <span className="text-sm font-medium text-rose-600">
-                    Expires: {contract?.expiryDate}
-                  </span>
+                  <span className="text-sm font-medium text-rose-600">Expires: {contract?.expiryDate}</span>
                 </div>
               );
             })}
