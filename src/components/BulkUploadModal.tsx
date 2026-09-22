@@ -3,6 +3,7 @@ import { Upload, FileText, CheckCircle, AlertCircle, Download, X } from 'lucide-
 import { useApp } from '../context/AppContext';
 import { departments, positions } from '../data/mockData';
 import { Employee } from '../types';
+import * as XLSX from 'xlsx';
 
 interface BulkUploadProps {
   isOpen: boolean;
@@ -29,49 +30,111 @@ export default function BulkUploadModal({ isOpen, onClose }: BulkUploadProps) {
     if (!uploadedFile) return;
 
     setFile(uploadedFile);
-    const reader = new FileReader();
-    
-    reader.onload = (event) => {
-      try {
-        const text = event.target?.result as string;
-        const lines = text.split('\n').filter(line => line.trim());
-        
-        if (lines.length < 2) {
-          setErrors(['File must have at least a header row and one data row']);
-          return;
-        }
+    const fileExtension = uploadedFile.name.split('.').pop()?.toLowerCase();
 
-        const headers = lines[0].split(',').map(h => h.trim());
-        const data = lines.slice(1).map(line => {
-          const values = line.split(',').map(v => v.trim());
-          const obj: any = {};
-          headers.forEach((header, idx) => {
-            obj[header] = values[idx] || '';
+    // Handle Excel files (.xlsx, .xls)
+    if (fileExtension === 'xlsx' || fileExtension === 'xls') {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const data = new Uint8Array(event.target?.result as ArrayBuffer);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          const jsonData = XLSX.utils.sheet_to_json(firstSheet, { defval: '' });
+
+          if (jsonData.length === 0) {
+            setErrors(['Excel file is empty']);
+            return;
+          }
+
+          // Convert to our format
+          const employees = jsonData.map((row: any) => ({
+            fullName: row['Full Name'] || row['fullName'] || '',
+            preferredName: row['Preferred Name'] || row['preferredName'] || '',
+            nik: row['NIK'] || row['nik'] || '',
+            npwp: row['NPWP'] || row['npwp'] || '',
+            dateOfBirth: row['Date of Birth'] || row['dateOfBirth'] || '',
+            gender: row['Gender'] || row['gender'] || 'M',
+            phone: row['Phone'] || row['phone'] || '',
+            email: row['Email'] || row['email'] || '',
+            address: row['Address'] || row['address'] || '',
+            emergencyContactName: row['Emergency Contact Name'] || row['emergencyContactName'] || '',
+            emergencyContactPhone: row['Emergency Contact Phone'] || row['emergencyContactPhone'] || '',
+            department: row['Department'] || row['department'] || '',
+            position: row['Position'] || row['position'] || '',
+            joinDate: row['Join Date'] || row['joinDate'] || '',
+            bankName: row['Bank Name'] || row['bankName'] || '',
+            bankAccountNumber: row['Bank Account Number'] || row['bankAccountNumber'] || '',
+            bankAccountName: row['Bank Account Name'] || row['bankAccountName'] || '',
+          }));
+
+          // Validate data
+          const validationErrors: string[] = [];
+          employees.forEach((emp: any, idx: number) => {
+            if (!emp.fullName) validationErrors.push(`Row ${idx + 2}: Full Name is required`);
+            if (!emp.email) validationErrors.push(`Row ${idx + 2}: Email is required`);
+            if (!emp.nik) validationErrors.push(`Row ${idx + 2}: NIK is required`);
           });
-          return obj;
-        });
 
-        // Validate data
-        const validationErrors: string[] = [];
-        data.forEach((row, idx) => {
-          if (!row.fullName) validationErrors.push(`Row ${idx + 2}: Full Name is required`);
-          if (!row.email) validationErrors.push(`Row ${idx + 2}: Email is required`);
-          if (!row.nik) validationErrors.push(`Row ${idx + 2}: NIK is required`);
-        });
-
-        if (validationErrors.length > 0) {
-          setErrors(validationErrors);
-          setPreview([]);
-        } else {
-          setErrors([]);
-          setPreview(data);
+          if (validationErrors.length > 0) {
+            setErrors(validationErrors);
+            setPreview([]);
+          } else {
+            setErrors([]);
+            setPreview(employees);
+          }
+        } catch (err) {
+          setErrors(['Failed to parse Excel file. Please check the format.']);
         }
-      } catch (err) {
-        setErrors(['Failed to parse CSV file. Please check the format.']);
-      }
-    };
+      };
+      reader.readAsArrayBuffer(uploadedFile);
+    } 
+    // Handle CSV files
+    else if (fileExtension === 'csv') {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const text = event.target?.result as string;
+          const lines = text.split('\n').filter(line => line.trim());
+          
+          if (lines.length < 2) {
+            setErrors(['File must have at least a header row and one data row']);
+            return;
+          }
 
-    reader.readAsText(uploadedFile);
+          const headers = lines[0].split(',').map(h => h.trim());
+          const data = lines.slice(1).map(line => {
+            const values = line.split(',').map(v => v.trim());
+            const obj: any = {};
+            headers.forEach((header, idx) => {
+              obj[header] = values[idx] || '';
+            });
+            return obj;
+          });
+
+          // Validate data
+          const validationErrors: string[] = [];
+          data.forEach((row, idx) => {
+            if (!row.fullName) validationErrors.push(`Row ${idx + 2}: Full Name is required`);
+            if (!row.email) validationErrors.push(`Row ${idx + 2}: Email is required`);
+            if (!row.nik) validationErrors.push(`Row ${idx + 2}: NIK is required`);
+          });
+
+          if (validationErrors.length > 0) {
+            setErrors(validationErrors);
+            setPreview([]);
+          } else {
+            setErrors([]);
+            setPreview(data);
+          }
+        } catch (err) {
+          setErrors(['Failed to parse CSV file. Please check the format.']);
+        }
+      };
+      reader.readAsText(uploadedFile);
+    } else {
+      setErrors(['Unsupported file format. Please upload .xlsx, .xls, or .csv file.']);
+    }
   };
 
   const handleImport = () => {
@@ -123,18 +186,31 @@ export default function BulkUploadModal({ isOpen, onClose }: BulkUploadProps) {
     }, 1000);
   };
 
-  const downloadTemplate = () => {
-    const headers = 'fullName,preferredName,nik,npwp,dateOfBirth,gender,phone,email,address,emergencyContactName,emergencyContactPhone,department,position,joinDate,bankName,bankAccountNumber,bankAccountName';
-    const sampleData = 'John Doe,John,1234567890123456,01.234.567.8-012.000,1990-01-15,M,+6281234567890,john@example.com,Jl. Sudirman No. 1,Jane Doe,+6281234567891,Food & Beverage,F&B Manager,2024-01-01,BCA,1234567890,John Doe';
-    const csv = headers + '\n' + sampleData;
-    
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'employee_import_template.csv';
-    a.click();
-    window.URL.revokeObjectURL(url);
+  const downloadTemplate = (format: 'excel' | 'csv') => {
+    const headers = ['Full Name', 'Preferred Name', 'NIK', 'NPWP', 'Date of Birth', 'Gender', 'Phone', 'Email', 'Address', 'Emergency Contact Name', 'Emergency Contact Phone', 'Department', 'Position', 'Join Date', 'Bank Name', 'Bank Account Number', 'Bank Account Name'];
+    const sampleData = ['John Doe', 'John', '1234567890123456', '01.234.567.8-012.000', '1990-01-15', 'M', '+6281234567890', 'john@example.com', 'Jl. Sudirman No. 1', 'Jane Doe', '+6281234567891', 'Food & Beverage', 'F&B Manager', '2024-01-01', 'BCA', '1234567890', 'John Doe'];
+
+    if (format === 'excel') {
+      // Create Excel file
+      const worksheet = XLSX.utils.aoa_to_sheet([headers, sampleData]);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Employees');
+      
+      // Set column widths
+      worksheet['!cols'] = headers.map(() => ({ wch: 20 }));
+      
+      XLSX.writeFile(workbook, 'employee_import_template.xlsx');
+    } else {
+      // Create CSV file
+      const csv = headers.join(',') + '\n' + sampleData.join(',');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'employee_import_template.csv';
+      a.click();
+      window.URL.revokeObjectURL(url);
+    }
   };
 
   if (!isOpen) return null;
@@ -154,11 +230,12 @@ export default function BulkUploadModal({ isOpen, onClose }: BulkUploadProps) {
           <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
             <h3 className="font-semibold text-blue-900 dark:text-blue-300 mb-2">Import Instructions:</h3>
             <ul className="text-sm text-blue-800 dark:text-blue-400 space-y-1 list-disc list-inside">
-              <li>Download the template CSV file first</li>
+              <li>Download the template file (Excel or CSV)</li>
               <li>Fill in employee data following the template format</li>
-              <li>Required fields: fullName, email, nik</li>
+              <li>Required fields: Full Name, Email, NIK</li>
               <li>Department and Position should match existing values exactly</li>
               <li>Employee codes will be auto-generated in format: AMG + YY + MM + Number</li>
+              <li>Supported formats: .xlsx, .xls, .csv</li>
             </ul>
           </div>
 
@@ -167,24 +244,33 @@ export default function BulkUploadModal({ isOpen, onClose }: BulkUploadProps) {
             <div className="flex items-center gap-3">
               <FileText size={24} className="text-slate-400" />
               <div>
-                <p className="font-medium text-slate-700 dark:text-slate-300">Template File</p>
-                <p className="text-sm text-slate-500 dark:text-slate-400">Download CSV template with sample data</p>
+                <p className="font-medium text-slate-700 dark:text-slate-300">Template Files</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Download template with sample data</p>
               </div>
             </div>
-            <button
-              onClick={downloadTemplate}
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
-            >
-              <Download size={16} />
-              Download Template
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => downloadTemplate('excel')}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium"
+              >
+                <Download size={16} />
+                Excel Template
+              </button>
+              <button
+                onClick={() => downloadTemplate('csv')}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
+              >
+                <Download size={16} />
+                CSV Template
+              </button>
+            </div>
           </div>
 
           {/* Upload File */}
           <div className="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg p-8 text-center">
             <input
               type="file"
-              accept=".csv"
+              accept=".xlsx,.xls,.csv"
               onChange={handleFileUpload}
               className="hidden"
               id="file-upload"
@@ -196,10 +282,10 @@ export default function BulkUploadModal({ isOpen, onClose }: BulkUploadProps) {
               <Upload size={48} className="text-slate-400" />
               <div>
                 <p className="font-medium text-slate-700 dark:text-slate-300">
-                  {file ? file.name : 'Click to upload CSV file'}
+                  {file ? file.name : 'Click to upload Excel or CSV file'}
                 </p>
                 <p className="text-sm text-slate-500 dark:text-slate-400">
-                  {file ? `${(file.size / 1024).toFixed(2)} KB` : 'CSV files only'}
+                  {file ? `${(file.size / 1024).toFixed(2)} KB` : 'Supports .xlsx, .xls, .csv'}
                 </p>
               </div>
             </label>
