@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { employees, leaveTypes } from '../data/mockData';
-import { CalendarDays, Clock, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { CalendarDays, Clock, CheckCircle, XCircle, AlertCircle, AlertTriangle, Shield, Clock as ClockIcon } from 'lucide-react';
 import Modal from '../components/Modal';
 
 export default function LeavePage() {
-  const { leaveRequests, setLeaveRequests, addToast, addAuditLog, addNotification } = useApp();
+  const {
+    leaveRequests, setLeaveRequests, employees: allEmployees, leaveTypes, payPolicy, addToast, addAuditLog, addNotification,
+    complianceRules,
+  } = useApp();
   const [filter, setFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL');
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState<string | null>(null);
@@ -13,7 +15,7 @@ export default function LeavePage() {
   const [newLeave, setNewLeave] = useState({ employeeId: '', leaveTypeId: '', startDate: '', endDate: '', reason: '' });
 
   const filtered = leaveRequests.filter(l => filter === 'ALL' || l.status === filter);
-  const getEmp = (id: string) => employees.find(e => e.id === id);
+  const getEmp = (id: string) => allEmployees.find(e => e.id === id);
   const getLeaveType = (id: string) => leaveTypes.find(lt => lt.id === id);
 
   const statusIcon = (status: string) => {
@@ -33,6 +35,43 @@ export default function LeavePage() {
       case 'CANCELLED': return 'bg-slate-100 text-slate-700';
       default: return 'bg-slate-100 text-slate-700';
     }
+  };
+
+  // Check compliance rules
+  const checkCompliance = (empId: string, startDate: string, endDate: string, leaveTypeId: string): { passed: boolean; warnings: string[] } => {
+    const warnings: string[] = [];
+    const emp = getEmp(empId);
+    const lt = getLeaveType(leaveTypeId);
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+
+    // High season blocking
+    const startStr = startDate;
+    const endStr = endDate;
+    const highSeasonActive = complianceRules.some(rule => rule.isActive && /high[- ]season/i.test(rule.name));
+    const isHighSeason = payPolicy.highSeasonDates.some(date => date >= startDate && date <= endDate);
+    if (isHighSeason && highSeasonActive) {
+      warnings.push('BLOCK');
+    } else if (isHighSeason) {
+      warnings.push('Selected dates overlap high-season dates. The block rule is off, so this request can still be submitted.');
+    }
+
+    // Annual leave accrual check (12 days after 12 months)
+    if (lt?.code === 'AL' && emp) {
+      const joinDate = new Date(emp.joinDate);
+      const monthsWorked = (start.getFullYear() - joinDate.getFullYear()) * 12 + (start.getMonth() - joinDate.getMonth());
+      if (monthsWorked < 12) {
+        warnings.push('⚠️ Annual leave requires 12 consecutive months of service. Employee has only worked ' + monthsWorked + ' months.');
+      }
+    }
+
+    // Sick leave requires doctor certificate
+    if (lt?.code === 'SL') {
+      warnings.push('📋 Sick leave requires doctor certificate (surat dokter) for paid leave.');
+    }
+
+    return { passed: warnings.length === 0, warnings };
   };
 
   const handleApprove = (id: string) => {
@@ -64,6 +103,17 @@ export default function LeavePage() {
     const start = new Date(newLeave.startDate);
     const end = new Date(newLeave.endDate);
     const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+
+    // Compliance check
+    const compliance = checkCompliance(newLeave.employeeId, newLeave.startDate, newLeave.endDate, newLeave.leaveTypeId);
+    if (compliance.warnings.includes('BLOCK')) {
+      addToast('Leave is blocked on high-season dates. Change the dates, or turn off the high-season rule in Regulatory Compliance.', 'error');
+      return;
+    }
+    if (compliance.warnings.length > 0) {
+      addToast(compliance.warnings.join(' | '), 'warning');
+    }
+
     const request = {
       id: 'lr' + Date.now(),
       employeeId: newLeave.employeeId,
@@ -85,13 +135,17 @@ export default function LeavePage() {
   };
 
   const pendingCount = leaveRequests.filter(l => l.status === 'PENDING').length;
+  const highSeasonActive = complianceRules.some(rule => rule.isActive && /high[- ]season/i.test(rule.name));
+  const highSeasonWarning = payPolicy.highSeasonDates.length > 0
+    ? `High-season dates: ${payPolicy.highSeasonDates.length}. ${highSeasonActive ? 'Overlap blocks new requests.' : 'The block rule is off.'}`
+    : 'No high-season dates configured.';
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Leave Management</h1>
-          <p className="text-slate-500 text-sm mt-1">{pendingCount} pending approval{pendingCount !== 1 ? 's' : ''}</p>
+          <p className="text-slate-500 text-sm mt-1">Leave requests, accrual tracking, and compliance checks per Indonesian labor law</p>
         </div>
         <button onClick={() => setShowRequestModal(true)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium">
           <CalendarDays size={16} /> Request Leave
@@ -103,6 +157,17 @@ export default function LeavePage() {
         <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Pending</p><p className="text-2xl font-bold text-amber-600">{leaveRequests.filter(l => l.status === 'PENDING').length}</p></div>
         <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Approved</p><p className="text-2xl font-bold text-emerald-600">{leaveRequests.filter(l => l.status === 'APPROVED').length}</p></div>
         <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Rejected</p><p className="text-2xl font-bold text-red-600">{leaveRequests.filter(l => l.status === 'REJECTED').length}</p></div>
+      </div>
+
+      {/* Compliance banner */}
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+        <AlertTriangle size={18} className="text-amber-600 flex-shrink-0 mt-0.5" />
+        <div>
+          <p className="text-sm font-medium text-amber-800">Compliance Rules Active</p>
+          <p className="text-sm text-amber-700 mt-1">{highSeasonWarning}</p>
+          <p className="text-sm text-amber-700 mt-1">• Annual leave: 12 days after 12 months consecutive service</p>
+          <p className="text-sm text-amber-700 mt-1">• High season / national holidays may block leave approval</p>
+        </div>
       </div>
 
       <div className="flex gap-2">
@@ -128,7 +193,7 @@ export default function LeavePage() {
                       <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded font-medium ${statusColor(lr.status)}`}>{statusIcon(lr.status)}{lr.status}</span>
                     </div>
                     <p className="text-sm text-slate-500 mt-1">{lt?.name} • {lr.startDate} to {lr.endDate} • {lr.totalDays} day{lr.totalDays > 1 ? 's' : ''}</p>
-                    <p className="text-sm text-slate-600 mt-2">Reason: {lr.reason}</p>
+                    <p className="text-sm text-slate-600 mt-1">Reason: {lr.reason}</p>
                     {lr.rejectionReason && <p className="text-sm text-red-600 mt-1">Rejection reason: {lr.rejectionReason}</p>}
                     <p className="text-xs text-slate-400 mt-1">Submitted: {new Date(lr.submittedAt).toLocaleDateString()}</p>
                   </div>
@@ -158,14 +223,14 @@ export default function LeavePage() {
             <label className="block text-sm font-medium text-slate-700 mb-1">Employee *</label>
             <select value={newLeave.employeeId} onChange={e => setNewLeave({...newLeave, employeeId: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
               <option value="">Select Employee</option>
-              {employees.filter(e => e.employmentStatus === 'ACTIVE').map(e => <option key={e.id} value={e.id}>{e.fullName} ({e.employeeCode})</option>)}
+              {allEmployees.filter(e => e.employmentStatus === 'ACTIVE').map(e => <option key={e.id} value={e.id}>{e.fullName} ({e.employeeCode})</option>)}
             </select>
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Leave Type *</label>
             <select value={newLeave.leaveTypeId} onChange={e => setNewLeave({...newLeave, leaveTypeId: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
               <option value="">Select Leave Type</option>
-              {leaveTypes.filter(lt => lt.isActive).map(lt => <option key={lt.id} value={lt.id}>{lt.name} ({lt.defaultEntitlement} days)</option>)}
+              {leaveTypes.filter(lt => lt.isActive).map(lt => <option key={lt.id} value={lt.id}>{lt.name} ({lt.defaultEntitlement} days entitlement)</option>)}
             </select>
           </div>
           <div className="grid grid-cols-2 gap-4">

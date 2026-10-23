@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { employees as mockEmployees, departments, positions } from '../data/mockData';
 import { employeesApi, isApiAvailable } from '../services/api';
 import { Search, Filter, Plus, ChevronRight, Mail, Phone, MapPin, Calendar, Briefcase, Users, RefreshCw, Upload } from 'lucide-react';
 import Modal from '../components/Modal';
@@ -8,7 +7,7 @@ import BulkUploadModal from '../components/BulkUploadModal';
 import { Employee } from '../types';
 
 export default function EmployeesPage() {
-  const { setEmployees, addToast, addAuditLog } = useApp();
+  const { employees, setEmployees, departments, positions, ptkpTables, addToast, addAuditLog } = useApp();
   const [search, setSearch] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -16,12 +15,11 @@ export default function EmployeesPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [employees, setLocalEmployees] = useState<Employee[]>(mockEmployees);
   const [newEmp, setNewEmp] = useState({
     fullName: '', preferredName: '', nik: '', npwp: '', dateOfBirth: '', gender: 'M' as 'M' | 'F',
     phone: '', email: '', address: '', emergencyContactName: '', emergencyContactPhone: '',
     departmentId: '', positionId: '', employmentStatus: 'ACTIVE' as const, joinDate: '',
-    bankName: '', bankAccountNumber: '', bankAccountName: '',
+    bankName: '', bankAccountNumber: '', bankAccountName: '', ptkpCode: 'TK/0',
   });
 
   // Load employees from API if available
@@ -53,8 +51,9 @@ export default function EmployeesPage() {
             bankName: emp.bank_name,
             bankAccountNumber: emp.bank_account_number,
             bankAccountName: emp.bank_account_name,
+            ptkpCode: emp.ptkp_code || 'TK/0',
           }));
-          setLocalEmployees(transformed);
+          if (transformed.length === 0) return;
           setEmployees(transformed);
         } catch (error) {
           console.error('Failed to load employees from API:', error);
@@ -152,8 +151,8 @@ export default function EmployeesPage() {
           bankName: created.bank_name,
           bankAccountNumber: created.bank_account_number,
           bankAccountName: created.bank_account_name,
+          ptkpCode: newEmp.ptkpCode || 'TK/0',
         };
-        setLocalEmployees(prev => [...prev, newEmployee]);
         setEmployees(prev => [...prev, newEmployee]);
         addAuditLog('CREATE', 'Employee', newEmployee.id, `${newEmployee.fullName} created`);
         addToast(`Employee ${newEmployee.fullName} (${empCode}) created successfully`, 'success');
@@ -180,8 +179,8 @@ export default function EmployeesPage() {
           bankName: newEmp.bankName,
           bankAccountNumber: newEmp.bankAccountNumber,
           bankAccountName: newEmp.bankAccountName,
+          ptkpCode: newEmp.ptkpCode || 'TK/0',
         };
-        setLocalEmployees(prev => [...prev, employee]);
         setEmployees(prev => [...prev, employee]);
         addAuditLog('CREATE', 'Employee', employee.id, `${employee.fullName} created`);
         addToast(`Employee ${employee.fullName} (${empCode}) created successfully`, 'success');
@@ -192,7 +191,7 @@ export default function EmployeesPage() {
         fullName: '', preferredName: '', nik: '', npwp: '', dateOfBirth: '', gender: 'M',
         phone: '', email: '', address: '', emergencyContactName: '', emergencyContactPhone: '',
         departmentId: '', positionId: '', employmentStatus: 'ACTIVE', joinDate: '',
-        bankName: '', bankAccountNumber: '', bankAccountName: '',
+        bankName: '', bankAccountNumber: '', bankAccountName: '', ptkpCode: 'TK/0',
       });
     } catch (error: any) {
       addToast(`Failed to create employee: ${error.message}`, 'error');
@@ -225,8 +224,9 @@ export default function EmployeesPage() {
           bankName: emp.bank_name,
           bankAccountNumber: emp.bank_account_number,
           bankAccountName: emp.bank_account_name,
+          ptkpCode: emp.ptkp_code || 'TK/0',
         }));
-        setLocalEmployees(transformed);
+        if (transformed.length === 0) return;
         setEmployees(transformed);
         addToast('Employee list refreshed from database', 'success');
       } catch (error) {
@@ -235,7 +235,7 @@ export default function EmployeesPage() {
         setLoading(false);
       }
     } else {
-      addToast('Backend not running. Using demo data.', 'info');
+      addToast('Employee list is the people registered in this session.', 'info');
     }
   };
 
@@ -271,6 +271,7 @@ export default function EmployeesPage() {
               <div className="text-slate-600">Gender: {selectedEmployee.gender === 'M' ? 'Male' : 'Female'}</div>
               <div className="text-slate-600">NIK: {selectedEmployee.nik}</div>
               {selectedEmployee.npwp && <div className="text-slate-600">NPWP: {selectedEmployee.npwp}</div>}
+              <div className="text-slate-600">PTKP: {selectedEmployee.ptkpCode || 'TK/0'}</div>
             </div>
             <div className="mt-4 pt-4 border-t border-slate-100">
               <p className="text-xs font-medium text-slate-500 mb-2">Emergency Contact</p>
@@ -464,7 +465,28 @@ export default function EmployeesPage() {
               <input type="date" value={newEmp.joinDate} onChange={e => setNewEmp({...newEmp, joinDate: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">PTKP</label>
+              <p className="text-xs text-slate-500 mb-1">Payroll uses this for the TER bracket.</p>
+              <select value={newEmp.ptkpCode} onChange={e => setNewEmp({...newEmp, ptkpCode: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500">
+                {(ptkpTables.length > 0 ? ptkpTables : [{ code: 'TK/0', label: 'TK/0' }]).map(row => (
+                  <option key={row.code} value={row.code}>{row.label || row.code}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Bank name</label>
+              <input type="text" value={newEmp.bankName} onChange={e => setNewEmp({...newEmp, bankName: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500" placeholder="BCA" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Account number</label>
+              <input type="text" value={newEmp.bankAccountNumber} onChange={e => setNewEmp({...newEmp, bankAccountNumber: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Account name</label>
+              <input type="text" value={newEmp.bankAccountName} onChange={e => setNewEmp({...newEmp, bankAccountName: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Employment Status</label>
               <select value={newEmp.employmentStatus} onChange={e => setNewEmp({...newEmp, employmentStatus: e.target.value as any})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500">
                 <option value="ACTIVE">Active</option>
                 <option value="PROBATION">Probation</option>

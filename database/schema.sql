@@ -4,8 +4,6 @@
 -- Drop tables if they exist (for clean migration)
 DROP TABLE IF EXISTS audit_logs CASCADE;
 DROP TABLE IF EXISTS notifications CASCADE;
-DROP TABLE IF EXISTS ai_extractions CASCADE;
-DROP TABLE IF EXISTS ai_requests CASCADE;
 DROP TABLE IF EXISTS payslips CASCADE;
 DROP TABLE IF EXISTS payroll_items CASCADE;
 DROP TABLE IF EXISTS payroll_records CASCADE;
@@ -361,29 +359,32 @@ CREATE TABLE payslips (
 );
 
 -- ============================================
--- AI FEATURES
+-- SERVICE CHARGE DISTRIBUTION
 -- ============================================
 
-CREATE TABLE ai_requests (
+CREATE TABLE service_charge_configs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id),
-    request_type VARCHAR(50),
-    prompt_context JSONB,
-    status VARCHAR(20),
-    model VARCHAR(100),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    completed_at TIMESTAMP
+    period_id UUID REFERENCES payroll_periods(id),
+    service_charge_percentage DECIMAL(5, 2) NOT NULL DEFAULT 10.00,
+    total_service_charge_pool DECIMAL(15, 2) NOT NULL DEFAULT 0,
+    distribution_method VARCHAR(30) NOT NULL DEFAULT 'EQUAL',
+    eligible_department_ids UUID[],
+    role_weights JSONB DEFAULT '{}',
+    is_active BOOLEAN DEFAULT true,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE ai_extractions (
+CREATE TABLE service_charge_distributions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    document_id UUID REFERENCES employee_documents(id),
-    extraction_type VARCHAR(50),
-    raw_result JSONB,
-    confidence DECIMAL(5, 2),
-    review_status VARCHAR(20) DEFAULT 'PENDING',
-    reviewed_by UUID REFERENCES users(id),
-    reviewed_at TIMESTAMP,
+    config_id UUID REFERENCES service_charge_configs(id) ON DELETE CASCADE,
+    period_id UUID REFERENCES payroll_periods(id),
+    employee_id UUID REFERENCES employees(id) ON DELETE CASCADE,
+    payroll_record_id UUID REFERENCES payroll_records(id) ON DELETE SET NULL,
+    amount DECIMAL(15, 2) NOT NULL DEFAULT 0,
+    distribution_basis TEXT,
+    status VARCHAR(20) DEFAULT 'DRAFT',
+    distributed_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

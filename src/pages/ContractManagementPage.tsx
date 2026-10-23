@@ -1,59 +1,11 @@
 import { useState } from 'react';
-import { employees, departments } from '../data/mockData';
-import { FileText, AlertTriangle, CheckCircle, XCircle, Calendar, Plus, Search } from 'lucide-react';
+import { useApp } from '../context/AppContext';
+import { FileText, AlertTriangle, CheckCircle, XCircle, Calendar, Search } from 'lucide-react';
 
 export default function ContractManagementPage() {
+  const { employees, departments, contracts } = useApp();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'active' | 'expiring' | 'expired'>('all');
-
-  // Mock contract data
-  const [contracts, setContracts] = useState([
-    {
-      id: 'c1',
-      employeeId: 'e1',
-      type: 'permanent',
-      startDate: '2020-03-01',
-      endDate: null,
-      status: 'active',
-      salary: 12500000,
-    },
-    {
-      id: 'c2',
-      employeeId: 'e2',
-      type: 'contract',
-      startDate: '2022-01-01',
-      endDate: '2024-12-31',
-      status: 'active',
-      salary: 9800000,
-    },
-    {
-      id: 'c3',
-      employeeId: 'e3',
-      type: 'contract',
-      startDate: '2023-06-01',
-      endDate: '2024-02-15',
-      status: 'expiring',
-      salary: 14200000,
-    },
-    {
-      id: 'c4',
-      employeeId: 'e4',
-      type: 'probation',
-      startDate: '2024-01-01',
-      endDate: '2024-04-01',
-      status: 'active',
-      salary: 5500000,
-    },
-    {
-      id: 'c5',
-      employeeId: 'e5',
-      type: 'contract',
-      startDate: '2023-01-01',
-      endDate: '2023-12-31',
-      status: 'expired',
-      salary: 7200000,
-    },
-  ]);
 
   const getEmp = (id: string) => employees.find(e => e.id === id);
   const getDept = (id: string) => departments.find(d => d.id === id)?.name || '-';
@@ -121,12 +73,10 @@ export default function ContractManagementPage() {
 
   const getContractTypeLabel = (type: string) => {
     switch (type) {
-      case 'permanent':
-        return 'Permanent';
-      case 'contract':
-        return 'Fixed Term';
-      case 'probation':
-        return 'Probation';
+      case 'PKWTT':
+        return 'PKWTT permanent';
+      case 'PKWT':
+        return 'PKWT fixed term';
       default:
         return type;
     }
@@ -137,11 +87,8 @@ export default function ContractManagementPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Contract Management</h1>
-          <p className="text-slate-500 text-sm mt-1">Manage employment contracts and track expiry dates</p>
+          <p className="text-slate-500 text-sm mt-1">Signed offers from Hiring. Payroll reads the basic salary and allowance on the active contract.</p>
         </div>
-        <button className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium">
-          <Plus size={16} /> New Contract
-        </button>
       </div>
 
       {/* Stats */}
@@ -282,7 +229,7 @@ export default function ContractManagementPage() {
                       </div>
                       <div>
                         <p className="text-slate-500 text-xs">Salary</p>
-                        <p className="font-medium text-slate-700">{formatCurrency(contract.salary)}</p>
+                        <p className="font-medium text-slate-700">{formatCurrency(contract.basicSalary)} + {formatCurrency(contract.allowance)}</p>
                       </div>
                     </div>
 
@@ -300,16 +247,6 @@ export default function ContractManagementPage() {
                   </div>
                 </div>
                 
-                <div className="flex gap-2">
-                  <button className="px-3 py-1.5 text-sm font-medium text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors">
-                    View
-                  </button>
-                  {contract.status === 'expiring' && (
-                    <button className="px-3 py-1.5 text-sm font-medium text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors">
-                      Renew
-                    </button>
-                  )}
-                </div>
               </div>
             </div>
           );
@@ -319,7 +256,7 @@ export default function ContractManagementPage() {
       {filteredContracts.length === 0 && (
         <div className="text-center py-12 text-slate-500">
           <FileText size={40} className="mx-auto mb-3 text-slate-300" />
-          <p>No contracts found.</p>
+          <p>No signed contracts yet. Accept an applicant in Hiring, then sign the offer.</p>
         </div>
       )}
     </div>

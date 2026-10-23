@@ -1,14 +1,18 @@
 import { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { employees, shifts } from '../data/mockData';
+import { minutesLate } from '../lib/payrollEngine';
 import { Search, Filter, LogIn, LogOut, AlertCircle } from 'lucide-react';
 import Modal from '../components/Modal';
+import ClockCapture, { ClockProof } from '../components/ClockCapture';
+import { punchRejection } from '../lib/officeLocation';
 
 export default function AttendancePage() {
-  const { attendance, setAttendance, addToast, addAuditLog } = useApp();
+  const { attendance, setAttendance, employees, shifts, shiftAssignments, officeLocation, addToast, addAuditLog } = useApp();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
+  const [punch, setPunch] = useState<{ id: string; mode: 'in' | 'out' } | null>(null);
+  const [proofView, setProofView] = useState<{ photo?: string; lat?: number; lng?: number; label: string } | null>(null);
   const [correction, setCorrection] = useState({ employeeId: '', date: '', type: 'clock_in', value: '', reason: '' });
   const today = new Date().toISOString().split('T')[0];
   const todayAttendance = attendance.filter(a => a.attendanceDate === today);
@@ -36,24 +40,43 @@ export default function AttendancePage() {
     }
   };
 
-  const handleClockIn = (id: string) => {
-    const now = new Date();
-    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    setAttendance(prev => prev.map(a => a.id === id ? { ...a, clockIn: timeStr, status: 'PRESENT' as const } : a));
-    const att = attendance.find(a => a.id === id);
-    const emp = getEmp(att?.employeeId || '');
-    addAuditLog('UPDATE', 'Attendance', id, `Clock in at ${timeStr} for ${emp?.fullName}`);
-    addToast(`${emp?.fullName} clocked in at ${timeStr}`, 'success');
+  const resolveShiftId = (employeeId: string, date: string, fallback: string) => {
+    return shiftAssignments.find(row => row.employeeId === employeeId && row.date === date)?.shiftId || fallback;
   };
 
-  const handleClockOut = (id: string) => {
+  const savePunch = (captured: ClockProof) => {
+    if (!punch) return;
+    const rejected = punchRejection(captured.photo, captured.latitude, captured.longitude, officeLocation);
+    if (rejected) {
+      addToast(rejected, 'error');
+      return;
+    }
     const now = new Date();
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    setAttendance(prev => prev.map(a => a.id === id ? { ...a, clockOut: timeStr } : a));
-    const att = attendance.find(a => a.id === id);
+    const att = attendance.find(row => row.id === punch.id);
+    const shiftId = resolveShiftId(att?.employeeId || '', att?.attendanceDate || today, att?.shiftId || '');
+    const shift = getShift(shiftId);
+    const late = punch.mode === 'in' && shift && !shift.crossesMidnight ? minutesLate(timeStr, shift.startTime) : att?.lateMinutes || 0;
+    setAttendance(prev => prev.map(row => {
+      if (row.id !== punch.id) return row;
+      if (punch.mode === 'out') {
+        return { ...row, clockOut: timeStr, clockOutPhoto: captured.photo, clockOutLat: captured.latitude, clockOutLng: captured.longitude, clockOutAccuracy: captured.accuracy };
+      }
+      return {
+        ...row,
+        shiftId,
+        clockIn: timeStr,
+        lateMinutes: late,
+        status: late > 0 ? 'LATE' as const : 'PRESENT' as const,
+        clockInPhoto: captured.photo,
+        clockInLat: captured.latitude,
+        clockInLng: captured.longitude,
+        clockInAccuracy: captured.accuracy,
+      };
+    }));
     const emp = getEmp(att?.employeeId || '');
-    addAuditLog('UPDATE', 'Attendance', id, `Clock out at ${timeStr} for ${emp?.fullName}`);
-    addToast(`${emp?.fullName} clocked out at ${timeStr}`, 'success');
+    addToast(`${emp?.fullName} clocked ${punch.mode === 'in' ? 'in' : 'out'} at ${timeStr}`, late > 0 && punch.mode === 'in' ? 'warning' : 'success');
+    setPunch(null);
   };
 
   const handleSubmitCorrection = () => {
@@ -61,8 +84,37 @@ export default function AttendancePage() {
       addToast('Please fill in all required fields', 'error');
       return;
     }
-    addAuditLog('CREATE', 'AttendanceCorrection', Date.now().toString(), `Correction requested for ${getEmp(correction.employeeId)?.fullName}`);
-    addToast('Attendance correction request submitted', 'success');
+    const shiftId = resolveShiftId(correction.employeeId, correction.date, 's4');
+    const shift = getShift(shiftId);
+    setAttendance(prev => {
+      const index = prev.findIndex(row => row.employeeId === correction.employeeId && row.attendanceDate === correction.date);
+      const apply = (row: typeof prev[number]) => {
+        if (correction.type === 'clock_out') {
+          return { ...row, shiftId, clockOut: correction.value, notes: correction.reason };
+        }
+        const late = shift && !shift.crossesMidnight ? minutesLate(correction.value, shift.startTime) : 0;
+        return {
+          ...row,
+          shiftId,
+          clockIn: correction.value,
+          lateMinutes: late,
+          status: late > 0 ? 'LATE' as const : 'PRESENT' as const,
+          notes: correction.reason,
+        };
+      };
+      if (index < 0) {
+        return [...prev, apply({
+          id: `a${Date.now()}`,
+          employeeId: correction.employeeId,
+          attendanceDate: correction.date,
+          shiftId,
+          status: 'PRESENT',
+        })];
+      }
+      return prev.map((row, i) => i === index ? apply(row) : row);
+    });
+    addAuditLog('UPDATE', 'Attendance', correction.employeeId, `Correction ${correction.type} ${correction.value} on ${correction.date} for ${getEmp(correction.employeeId)?.fullName}: ${correction.reason}`);
+    addToast('Attendance correction saved', 'success');
     setShowCorrectionModal(false);
     setCorrection({ employeeId: '', date: '', type: 'clock_in', value: '', reason: '' });
   };
@@ -145,14 +197,17 @@ export default function AttendancePage() {
                     <td className="px-4 py-3">
                       <div className="flex gap-1">
                         {!a.clockIn && a.status !== 'ON_LEAVE' && a.status !== 'REST_DAY' && a.status !== 'ABSENT' && (
-                          <button onClick={() => handleClockIn(a.id)} className="p-1.5 bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100" title="Clock In">
+                          <button onClick={() => setPunch({ id: a.id, mode: 'in' })} className="p-1.5 bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100" title="Clock In">
                             <LogIn size={14} />
                           </button>
                         )}
                         {a.clockIn && !a.clockOut && (
-                          <button onClick={() => handleClockOut(a.id)} className="p-1.5 bg-amber-50 text-amber-700 rounded hover:bg-amber-100" title="Clock Out">
+                          <button onClick={() => setPunch({ id: a.id, mode: 'out' })} className="p-1.5 bg-amber-50 text-amber-700 rounded hover:bg-amber-100" title="Clock Out">
                             <LogOut size={14} />
                           </button>
+                        )}
+                        {(a.clockInPhoto || a.clockOutPhoto) && (
+                          <button onClick={() => setProofView({ photo: a.clockOutPhoto || a.clockInPhoto, lat: a.clockOutLat || a.clockInLat, lng: a.clockOutLng || a.clockInLng, label: emp?.fullName || 'Punch' })} className="px-2 py-1 text-xs text-indigo-700">Proof</button>
                         )}
                       </div>
                     </td>
@@ -163,6 +218,17 @@ export default function AttendancePage() {
           </table>
         </div>
       </div>
+
+      {punch && <ClockCapture title={punch.mode === 'in' ? 'Clock in' : 'Clock out'} onCancel={() => setPunch(null)} onConfirm={savePunch} />}
+      {proofView && (
+        <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center p-4" onClick={() => setProofView(null)}>
+          <div className="bg-white rounded-xl p-4 max-w-sm" onClick={event => event.stopPropagation()}>
+            <p className="font-medium text-slate-800 mb-2">{proofView.label}</p>
+            {proofView.photo && <img src={proofView.photo} alt="Punch proof" className="rounded-lg mb-2" />}
+            <p className="text-sm text-slate-600">{proofView.lat?.toFixed(5)}, {proofView.lng?.toFixed(5)}</p>
+          </div>
+        </div>
+      )}
 
       {/* Correction Modal */}
       <Modal isOpen={showCorrectionModal} onClose={() => setShowCorrectionModal(false)} title="Request Attendance Correction">

@@ -1,11 +1,10 @@
 import { useApp } from '../context/AppContext';
-import { employees, departments } from '../data/mockData';
 import { Users, UserCheck, UserX, CalendarClock, Clock, AlertTriangle, FileWarning, CheckCircle } from 'lucide-react';
 
 interface DashboardProps { onNavigate: (page: string) => void; }
 
 export default function Dashboard({ onNavigate }: DashboardProps) {
-  const { attendance, leaveRequests, overtimeRequests, payrollPeriods, documents } = useApp();
+  const { employees, departments, attendance, leaveRequests, overtimeRequests, payrollPeriods, workingPeriodId, contracts } = useApp();
   const today = new Date().toISOString().split('T')[0];
   const todayAttendance = attendance.filter(a => a.attendanceDate === today);
   const presentToday = todayAttendance.filter(a => a.status === 'PRESENT' || a.status === 'LATE').length;
@@ -16,19 +15,12 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   const pendingOvertime = overtimeRequests.filter(o => o.status === 'PENDING').length;
   const activeEmployees = employees.filter(e => e.employmentStatus === 'ACTIVE').length;
   const probationEmployees = employees.filter(e => e.employmentStatus === 'PROBATION').length;
-  const pendingDocs = documents.filter(d => d.verificationStatus === 'PENDING').length;
-  
-  const currentPayroll = payrollPeriods.find(p => p.status !== 'FINALIZED' && p.status !== 'LOCKED');
-  
-  const expiringContracts = employees.filter(e => {
-    const contract = documents.find(d => d.employeeId === e.id && d.documentTypeName === 'Employment Contract');
-    if (contract?.expiryDate) {
-      const expDate = new Date(contract.expiryDate);
-      const now = new Date();
-      const diff = (expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
-      return diff <= 60 && diff > 0;
-    }
-    return false;
+  const currentPayroll = payrollPeriods.find(p => p.id === workingPeriodId);
+
+  const expiringContracts = contracts.filter(contract => {
+    if (!contract.endDate || contract.status === 'expired') return false;
+    const diff = (new Date(contract.endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+    return diff <= 60 && diff > 0;
   });
 
   const cards = [
@@ -38,8 +30,8 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
     { label: 'On Leave', value: onLeaveToday, sublabel: 'Approved leave today', icon: <CalendarClock size={24} />, color: 'bg-amber-500', page: 'leave' },
     { label: 'Late Today', value: lateToday, sublabel: 'Arrived after shift start', icon: <Clock size={24} />, color: 'bg-orange-500', page: 'daily-attendance' },
     { label: 'Pending Approvals', value: pendingLeave + pendingOvertime, sublabel: `${pendingLeave} leave, ${pendingOvertime} overtime`, icon: <AlertTriangle size={24} />, color: 'bg-purple-500', page: 'leave' },
-    { label: 'Contracts Expiring', value: expiringContracts.length, sublabel: 'Within 60 days', icon: <FileWarning size={24} />, color: 'bg-rose-500', page: 'documents' },
-    { label: 'Pending Documents', value: pendingDocs, sublabel: 'Awaiting verification', icon: <CheckCircle size={24} />, color: 'bg-teal-500', page: 'documents' },
+    { label: 'Contracts Expiring', value: expiringContracts.length, sublabel: 'Within 60 days', icon: <FileWarning size={24} />, color: 'bg-rose-500', page: 'contracts' },
+    { label: 'Open Hiring', value: employees.filter(e => e.employmentStatus === 'PROBATION').length, sublabel: 'Still onboarding', icon: <CheckCircle size={24} />, color: 'bg-teal-500', page: 'hiring' },
   ];
 
   return (
@@ -93,7 +85,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                 <span className="text-slate-500">Employees</span>
                 <span className="font-medium text-slate-700">{activeEmployees}</span>
               </div>
-              <button onClick={() => onNavigate('payroll-periods')} className="w-full mt-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
+              <button onClick={() => onNavigate('payroll')} className="w-full mt-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
                 View Payroll Details
               </button>
             </div>
@@ -148,20 +140,20 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             Contracts Expiring Soon
           </h3>
           <div className="space-y-2">
-            {expiringContracts.map(emp => {
-              const contract = documents.find(d => d.employeeId === emp.id && d.documentTypeName === 'Employment Contract');
+            {expiringContracts.map(contract => {
+              const emp = employees.find(row => row.id === contract.employeeId);
               return (
-                <div key={emp.id} className="flex items-center justify-between p-3 bg-rose-50 rounded-lg border border-rose-100">
+                <div key={contract.id} className="flex items-center justify-between p-3 bg-rose-50 rounded-lg border border-rose-100">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 bg-rose-100 rounded-full flex items-center justify-center text-xs font-bold text-rose-700">
-                      {emp.fullName.charAt(0)}
+                      {emp?.fullName.charAt(0)}
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-slate-700">{emp.fullName}</p>
-                      <p className="text-xs text-slate-500">{emp.employeeCode} • {departments.find(d => d.id === emp.departmentId)?.name}</p>
+                      <p className="text-sm font-medium text-slate-700">{emp?.fullName}</p>
+                      <p className="text-xs text-slate-500">{emp?.employeeCode} • {departments.find(d => d.id === emp?.departmentId)?.name}</p>
                     </div>
                   </div>
-                  <span className="text-sm font-medium text-rose-600">Expires: {contract?.expiryDate}</span>
+                  <span className="text-sm font-medium text-rose-600">Expires: {contract.endDate}</span>
                 </div>
               );
             })}

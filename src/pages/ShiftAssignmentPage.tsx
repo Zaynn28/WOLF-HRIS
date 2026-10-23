@@ -1,22 +1,15 @@
 import { useState } from 'react';
-import { employees, shifts, departments } from '../data/mockData';
+import { useApp } from '../context/AppContext';
 import { Calendar, Clock, Users, Plus, X } from 'lucide-react';
 
 export default function ShiftAssignmentPage() {
+  const { employees, shifts, departments, shiftAssignments: assignments, setShiftAssignments: setAssignments } = useApp();
   const [selectedDepartment, setSelectedDepartment] = useState('');
   const [selectedWeek, setSelectedWeek] = useState(new Date());
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedEmployee, setSelectedEmployee] = useState('');
   const [selectedShift, setSelectedShift] = useState('');
-
-  // Mock shift assignments
-  const [assignments, setAssignments] = useState([
-    { id: '1', employeeId: 'e1', date: '2024-01-15', shiftId: 's1' },
-    { id: '2', employeeId: 'e1', date: '2024-01-16', shiftId: 's1' },
-    { id: '3', employeeId: 'e2', date: '2024-01-15', shiftId: 's2' },
-    { id: '4', employeeId: 'e3', date: '2024-01-15', shiftId: 's4' },
-  ]);
 
   const getWeekDates = (date: Date) => {
     const week = [];
@@ -63,7 +56,10 @@ export default function ShiftAssignmentPage() {
       shiftId: selectedShift,
     };
 
-    setAssignments([...assignments, newAssignment]);
+    setAssignments(prev => {
+      const withoutSameDay = prev.filter(row => !(row.employeeId === selectedEmployee && row.date === selectedDate));
+      return [...withoutSameDay, newAssignment];
+    });
     setShowAssignModal(false);
     setSelectedEmployee('');
     setSelectedDate('');
@@ -71,7 +67,7 @@ export default function ShiftAssignmentPage() {
   };
 
   const handleRemoveAssignment = (id: string) => {
-    setAssignments(assignments.filter(a => a.id !== id));
+    setAssignments(prev => prev.filter(a => a.id !== id));
   };
 
   const navigateWeek = (direction: 'prev' | 'next') => {

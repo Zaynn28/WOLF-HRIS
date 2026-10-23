@@ -27,10 +27,8 @@ export default function LoginPage() {
   const demoAccounts = [
     { email: 'admin@atrium.hr', password: 'admin123', role: 'HR Admin' },
     { email: 'payroll@atrium.hr', password: 'payroll123', role: 'Payroll' },
-    { email: 'supervisor@atrium.hr', password: 'super123', role: 'Supervisor' },
-    { email: 'employee@atrium.hr', password: 'emp123', role: 'Employee' },
-    { email: 'gm@atrium.hr', password: 'gm123', role: 'General Manager' },
-    { email: 'finance@atrium.hr', password: 'fin123', role: 'Finance Controller' },
+    { email: 'finance@atrium.hr', password: 'fin123', role: 'Finance' },
+    { email: 'director@atrium.hr', password: 'director123', role: 'Director' },
   ];
 
   return (

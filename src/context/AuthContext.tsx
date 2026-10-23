@@ -5,6 +5,7 @@ interface AuthContextType {
   user: User | null;
   login: (email: string, password: string) => boolean;
   logout: () => void;
+  registerStaff: (user: User) => void;
   isAuthenticated: boolean;
 }
 
@@ -12,12 +13,12 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const demoUsers: Record<string, { user: User; password: string }> = {
   'admin@atrium.hr': { user: { id: 'u1', email: 'admin@atrium.hr', fullName: 'Admin HR', role: 'HR_ADMIN' }, password: 'admin123' },
-  'payroll@atrium.hr': { user: { id: 'u2', email: 'payroll@atrium.hr', fullName: 'Tono Wibisono', role: 'PAYROLL' }, password: 'payroll123' },
-  'supervisor@atrium.hr': { user: { id: 'u3', email: 'supervisor@atrium.hr', fullName: 'Ahmad Wijaya', role: 'SUPERVISOR' }, password: 'super123' },
-  'employee@atrium.hr': { user: { id: 'u4', email: 'employee@atrium.hr', fullName: 'Sari Rahayu', role: 'EMPLOYEE' }, password: 'emp123' },
-  'gm@atrium.hr': { user: { id: 'u5', email: 'gm@atrium.hr', fullName: 'General Manager', role: 'GENERAL_MANAGER' }, password: 'gm123' },
+  'payroll@atrium.hr': { user: { id: 'u2', email: 'payroll@atrium.hr', fullName: 'Payroll Officer', role: 'PAYROLL' }, password: 'payroll123' },
   'finance@atrium.hr': { user: { id: 'u6', email: 'finance@atrium.hr', fullName: 'Financial Controller', role: 'FINANCIAL_CONTROLLER' }, password: 'fin123' },
+  'director@atrium.hr': { user: { id: 'u7', email: 'director@atrium.hr', fullName: 'Hotel Director', role: 'GENERAL_MANAGER' }, password: 'director123' },
 };
+
+export const STAFF_PASSWORD = 'staff123';
 
 export const rolePermissions: Record<Role, string[]> = {
   SUPER_ADMIN: ['*'],
@@ -37,12 +38,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const saved = localStorage.getItem('atrium_user');
     return saved ? JSON.parse(saved) : null;
   });
+  const [staffUsers, setStaffUsers] = useState<User[]>([]);
 
-  const login = (email: string, _password: string): boolean => {
+  const registerStaff = (staff: User) => {
+    setStaffUsers(prev => [...prev.filter(row => row.email !== staff.email), staff]);
+  };
+
+  const login = (email: string, password: string): boolean => {
     const demoUser = demoUsers[email];
     if (demoUser) {
       setUser(demoUser.user);
       localStorage.setItem('atrium_user', JSON.stringify(demoUser.user));
+      return true;
+    }
+    const staff = staffUsers.find(row => row.email === email);
+    if (staff && password === STAFF_PASSWORD) {
+      setUser(staff);
+      localStorage.setItem('atrium_user', JSON.stringify(staff));
       return true;
     }
     return false;
@@ -54,7 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, isAuthenticated: !!user }}>
+    <AuthContext.Provider value={{ user, login, logout, registerStaff, isAuthenticated: !!user }}>
       {children}
     </AuthContext.Provider>
   );
