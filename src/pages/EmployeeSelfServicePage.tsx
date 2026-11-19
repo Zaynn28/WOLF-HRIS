@@ -11,12 +11,23 @@ import {
   employeeDocumentFileUrl,
   employeePhotoUrl,
   isApiAvailable,
+  leaveApi,
+  mapAttendanceRow,
   mapEmployeeDocument,
   mapPunchMine,
+  mapSelfClaim,
+  mapSelfLeave,
+  mapSelfPayslip,
+  punchSitesApi,
+  selfServiceApi,
 } from '../services/api';
-import type { Employee, PunchMine } from '../types';
+import type { Attendance, Employee, PunchMine } from '../types';
 import { EmployeeDocument, ReimbursementClaim } from '../types';
 import { ProfileEditor } from '../components/ProfileEditor';
+
+type SelfLeaveRow = ReturnType<typeof mapSelfLeave>;
+type SelfPayslipRow = ReturnType<typeof mapSelfPayslip>;
+type LeaveTypeRow = { id: string; code: string; name: string; is_paid?: boolean };
 
 const PAYROLL_SLIP_STATUSES = new Set(['CALCULATED', 'UNDER_REVIEW', 'APPROVED', 'FINALIZED', 'LOCKED']);
 
@@ -73,6 +84,19 @@ export default function EmployeeSelfServicePage() {
   const [documentQueue, setDocumentQueue] = useState<QueuedStaffFile[]>([]);
   const [skippedDocumentNames, setSkippedDocumentNames] = useState<string[]>([]);
   const [documentSaveSummary, setDocumentSaveSummary] = useState('');
+  const [apiLeaveTypes, setApiLeaveTypes] = useState<LeaveTypeRow[]>([]);
+  const [apiLeave, setApiLeave] = useState<SelfLeaveRow[]>([]);
+  const [apiAttendance, setApiAttendance] = useState<Attendance[]>([]);
+  const [apiPayslips, setApiPayslips] = useState<SelfPayslipRow[]>([]);
+  const [apiClaims, setApiClaims] = useState<ReimbursementClaim[]>([]);
+  const [leaveForm, setLeaveForm] = useState({ leaveTypeId: '', startDate: '', endDate: '', reason: '' });
+  const [showLeaveForm, setShowLeaveForm] = useState(false);
+  const [punchSitesConfigured, setPunchSitesConfigured] = useState(false);
+  const [embedded, setEmbedded] = useState(false);
+
+  useEffect(() => {
+    setEmbedded(window.__WOLF_HR_EMBEDDED__ === true);
+  }, []);
 
   const employee = resolveEssEmployee(user, employees);
   const currentEmployeeId = employee?.id || '';
@@ -89,10 +113,43 @@ export default function EmployeeSelfServicePage() {
         setMineError(error instanceof Error ? error.message : 'Punch is not available for this session.');
       }
     });
+    punchSitesApi.list().then((rows) => {
+      if (!cancelled) setPunchSitesConfigured(Array.isArray(rows) && rows.some((row) => row.active !== false));
+    }).catch(() => {
+      if (!cancelled) setPunchSitesConfigured(false);
+    });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!employee?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [types, leaveRows, attendanceRows, payslipRows, claimRows] = await Promise.all([
+          leaveApi.types().catch(() => []),
+          leaveApi.listSelf().catch(() => []),
+          selfServiceApi.attendance().catch(() => []),
+          selfServiceApi.payslips().catch(() => []),
+          selfServiceApi.reimbursements().catch(() => []),
+        ]);
+        if (cancelled) return;
+        setApiLeaveTypes(Array.isArray(types) ? types : []);
+        setApiLeave((Array.isArray(leaveRows) ? leaveRows : []).map(mapSelfLeave));
+        setApiAttendance((Array.isArray(attendanceRows) ? attendanceRows : []).map(mapAttendanceRow));
+        setApiPayslips((Array.isArray(payslipRows) ? payslipRows : []).map(mapSelfPayslip));
+        setApiClaims((Array.isArray(claimRows) ? claimRows : []).map(mapSelfClaim));
+      } catch {
+        // Keep local context when self APIs are offline.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [employee?.id]);
+
   const myTasks = tasks.filter(task => task.assigneeId === currentEmployeeId);
   const myDocuments = documents.filter(doc => doc.employeeId === currentEmployeeId);
   const myAssets = companyAssets.filter(asset => asset.holderId === currentEmployeeId);
@@ -232,7 +289,6 @@ export default function EmployeeSelfServicePage() {
     setSkippedDocumentNames([]);
   };
 
-  const myClaims = reimbursements.filter(row => row.employeeId === currentEmployeeId);
   const myLoans = employeeLoans.filter(row => row.employeeId === currentEmployeeId);
   const myLoanBalance = myLoans.reduce((sum, row) => sum + row.remainingBalance, 0);
 
@@ -246,7 +302,7 @@ export default function EmployeeSelfServicePage() {
     reader.readAsDataURL(file);
   };
 
-  const submitOwnClaim = () => {
+  const submitOwnClaim = async () => {
     if (!employee) {
       addToast('This login is not linked to an employee record.', 'error');
       return;
@@ -256,34 +312,77 @@ export default function EmployeeSelfServicePage() {
       addToast('Date, description, and an amount greater than 0 are required.', 'error');
       return;
     }
-    const claim: ReimbursementClaim = {
-      id: `rb${Date.now()}`,
-      employeeId: employee.id,
-      claimDate: claimForm.claimDate,
-      category: claimForm.category,
-      amount,
-      description: claimForm.description.trim(),
-      receiptFileName: claimForm.receiptFileName || undefined,
-      receiptFileSize: claimForm.receiptFileSize || undefined,
-      receiptDataUrl: claimForm.receiptDataUrl || undefined,
-      status: 'SUBMITTED',
-      submittedByName: employee.fullName,
-      submittedAt: new Date().toISOString(),
-    };
-    setReimbursements(prev => [claim, ...prev]);
-    addAuditLog('CREATE', 'Reimbursement', claim.id, `${claim.category} ${amount} submitted by ${employee.fullName}`);
-    addToast('Claim submitted. Finance or the Director will review it.', 'success');
-    setClaimForm({ claimDate: '', category: 'TRANSPORT', amount: '', description: '', receiptFileName: '', receiptFileSize: 0, receiptDataUrl: '' });
+    try {
+      const saved = await selfServiceApi.createReimbursement({
+        claim_date: claimForm.claimDate,
+        category: claimForm.category,
+        amount,
+        description: claimForm.description.trim(),
+        receipt: claimForm.receiptDataUrl || undefined,
+        receipt_file_name: claimForm.receiptFileName || undefined,
+      });
+      const claim = mapSelfClaim(saved);
+      setApiClaims((prev) => [claim, ...prev.filter((row) => row.id !== claim.id)]);
+      setReimbursements((prev) => [claim, ...prev.filter((row) => row.id !== claim.id)]);
+      addAuditLog('CREATE', 'Reimbursement', claim.id, `${claim.category} ${amount} submitted by ${employee.fullName}`);
+      addToast('Claim submitted. Finance or the Director will review it.', 'success');
+      setClaimForm({ claimDate: '', category: 'TRANSPORT', amount: '', description: '', receiptFileName: '', receiptFileSize: 0, receiptDataUrl: '' });
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'The claim was not saved.', 'error');
+    }
   };
 
-  const myLeaveRequests = leaveRequests.filter(lr => lr.employeeId === currentEmployeeId);
-  const myAttendance = attendance.filter(row => row.employeeId === currentEmployeeId);
+  const submitLeaveRequest = async () => {
+    if (!employee) {
+      addToast('This login is not linked to an employee record.', 'error');
+      return;
+    }
+    if (!leaveForm.leaveTypeId || !leaveForm.startDate || !leaveForm.endDate) {
+      addToast('Leave type, start date, and end date are required.', 'error');
+      return;
+    }
+    try {
+      const saved = await leaveApi.createSelf({
+        leave_type_id: leaveForm.leaveTypeId,
+        start_date: leaveForm.startDate,
+        end_date: leaveForm.endDate,
+        reason: leaveForm.reason.trim() || undefined,
+      });
+      const row = mapSelfLeave(saved);
+      setApiLeave((prev) => [row, ...prev.filter((item) => item.id !== row.id)]);
+      addToast('Leave request submitted for review.', 'success');
+      setLeaveForm({ leaveTypeId: '', startDate: '', endDate: '', reason: '' });
+      setShowLeaveForm(false);
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'The leave request was not saved.', 'error');
+    }
+  };
+
+  const effectiveLeaveTypes = apiLeaveTypes.length > 0
+    ? apiLeaveTypes.map((row) => ({ id: row.id, code: row.code, name: row.name, isPaid: row.is_paid !== false }))
+    : leaveTypes;
+  const myLeaveRequests = apiLeave.length > 0
+    ? apiLeave.map((row) => ({
+        id: row.id,
+        employeeId: row.employeeId,
+        leaveTypeId: row.leaveTypeId,
+        startDate: row.startDate,
+        endDate: row.endDate,
+        totalDays: row.totalDays,
+        reason: row.reason,
+        status: row.status as 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED',
+        approvedBy: row.approvedBy,
+        approvedAt: row.approvedAt,
+      }))
+    : leaveRequests.filter((lr) => lr.employeeId === currentEmployeeId);
+  const myAttendance = apiAttendance.length > 0
+    ? apiAttendance
+    : attendance.filter((row) => row.employeeId === currentEmployeeId);
   const myPayrollRecords = currentEmployeeId
     ? payrollRecords.filter((pr) => {
         if (pr.employeeId !== currentEmployeeId) return false;
         const period = payrollPeriods.find((row) => row.id === pr.payrollPeriodId);
         if (period && PAYROLL_SLIP_STATUSES.has(period.status)) return true;
-        // Show calculated lines even if period status lagged behind.
         return pr.status === 'CALCULATED' || pr.status === 'FINALIZED' || pr.status === 'APPROVED';
       })
     : [];
@@ -295,10 +394,17 @@ export default function EmployeeSelfServicePage() {
           (slip.status === 'PUBLISHED' || slip.status === 'DRAFT'),
       )
     : [];
-  const payslipCount = myPayrollRecords.length + myServiceChargeSlips.length;
+  const payslipCount = apiPayslips.length > 0
+    ? apiPayslips.length + myServiceChargeSlips.length
+    : myPayrollRecords.length + myServiceChargeSlips.length;
+  const myClaims = apiClaims.length > 0
+    ? apiClaims
+    : reimbursements.filter((row) => row.employeeId === currentEmployeeId);
 
   const getLeaveTypeName = (leaveTypeId: string) => {
-    const leaveType = leaveTypes.find(lt => lt.id === leaveTypeId);
+    const fromApi = apiLeave.find((row) => row.leaveTypeId === leaveTypeId)?.leaveTypeName;
+    if (fromApi) return fromApi;
+    const leaveType = effectiveLeaveTypes.find((lt) => lt.id === leaveTypeId);
     return leaveType?.name || 'Leave';
   };
 
@@ -315,11 +421,19 @@ export default function EmployeeSelfServicePage() {
   };
 
   const annualUsed = myLeaveRequests
-    .filter(row => row.status === 'APPROVED' && leaveTypes.find(type => type.id === row.leaveTypeId)?.code === 'AL')
+    .filter((row) => {
+      if (row.status !== 'APPROVED') return false;
+      const code = apiLeave.find((item) => item.id === row.id)?.leaveTypeCode
+        || effectiveLeaveTypes.find((type) => type.id === row.leaveTypeId)?.code;
+      return code === 'AL';
+    })
     .reduce((sum, row) => sum + row.totalDays, 0);
   const leaveBalance = {
     annual: { total: 12, used: annualUsed, remaining: Math.max(0, 12 - annualUsed) },
   };
+  const pendingRequests =
+    myLeaveRequests.filter((lr) => lr.status === 'PENDING').length +
+    myClaims.filter((claim) => claim.status === 'SUBMITTED').length;
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -340,46 +454,45 @@ export default function EmployeeSelfServicePage() {
 
   return (
     <div className="space-y-6">
-      {/* Welcome Header */}
-      <div className="bg-gradient-to-r from-indigo-600 to-indigo-700 rounded-xl p-6 text-white">
+      <div className="bg-slate-900 text-white rounded-xl p-5 sm:p-6">
         <div className="flex items-center gap-4">
           {employee?.hasProfilePhoto ? (
-            <img src={`${employeePhotoUrl(employee.id)}?v=${encodeURIComponent(employee.updatedAt || '1')}`} alt="" className="w-16 h-16 rounded-full object-cover" />
+            <img src={`${employeePhotoUrl(employee.id)}?v=${encodeURIComponent(employee.updatedAt || '1')}`} alt="" className="w-14 h-14 sm:w-16 sm:h-16 rounded-full object-cover" />
           ) : (
-            <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center">
-              <User size={32} />
+            <div className="w-14 h-14 sm:w-16 sm:h-16 bg-white/15 rounded-full flex items-center justify-center">
+              <User size={28} />
             </div>
           )}
-          <div>
-            <h1 className="text-2xl font-bold">Welcome back, {employee?.preferredName || employee?.fullName || user?.fullName}!</h1>
-            <p className="text-indigo-100">{position?.title} • {department?.name}</p>
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-normal truncate">Welcome back, {employee?.preferredName || employee?.fullName || user?.fullName}!</h1>
+            <p className="text-slate-300 text-sm truncate">{position?.title} • {department?.name}</p>
           </div>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
+      <div className="bg-white rounded-xl border border-slate-200 p-4 flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3">
+        <div className="min-w-0">
           <p className="font-medium text-slate-800">Today’s punch</p>
           <p className="text-sm text-slate-500">
             {mine?.day?.clockIn ? `In ${mine.day.clockIn}` : 'Not clocked in'}
             {mine?.day?.clockOut ? ` · Out ${mine.day.clockOut}` : ''}
             {mine?.day?.clockInSiteName ? ` · ${mine.day.clockInSiteName}` : ''}
           </p>
+          {punchSitesConfigured && <p className="text-xs text-slate-500 mt-1">Photo and GPS required. You must be inside a punch site.</p>}
           {mine?.blockedReason && <p className="text-sm text-red-600">{mine.blockedReason}</p>}
           {mine === null && <p className="text-sm text-slate-500">{mineError || 'Punch is not available for this session.'}</p>}
         </div>
-        <div className="flex gap-2">
-          {mine?.next === 'in' && <button onClick={() => setPunchMode('in')} className="px-3 py-2 bg-emerald-600 text-white rounded-lg text-sm">Clock in</button>}
-          {mine?.next === 'out' && <button onClick={() => setPunchMode('out')} className="px-3 py-2 bg-amber-600 text-white rounded-lg text-sm">Clock out</button>}
+        <div className="flex gap-2 w-full sm:w-auto">
+          {mine?.next === 'in' && <button type="button" onClick={() => setPunchMode('in')} className="flex-1 sm:flex-none px-4 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-medium">Clock in</button>}
+          {mine?.next === 'out' && <button type="button" onClick={() => setPunchMode('out')} className="flex-1 sm:flex-none px-4 py-2.5 bg-amber-600 text-white rounded-lg text-sm font-medium">Clock out</button>}
         </div>
       </div>
       {punchMode && <ClockCapture title={punchMode === 'in' ? 'Clock in' : 'Clock out'} onCancel={() => setPunchMode(null)} onConfirm={savePunch} />}
 
-      {/* Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-white rounded-xl border border-slate-200 p-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
+            <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center shrink-0">
               <CheckCircle size={20} className="text-emerald-600" />
             </div>
             <div>
@@ -391,8 +504,8 @@ export default function EmployeeSelfServicePage() {
 
         <div className="bg-white rounded-xl border border-slate-200 p-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-              <Calendar size={20} className="text-blue-600" />
+            <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center shrink-0">
+              <Calendar size={20} className="text-slate-700" />
             </div>
             <div>
               <p className="text-2xl font-bold text-slate-800">{leaveBalance.annual.remaining}</p>
@@ -403,11 +516,11 @@ export default function EmployeeSelfServicePage() {
 
         <div className="bg-white rounded-xl border border-slate-200 p-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
+            <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center shrink-0">
               <Clock size={20} className="text-amber-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-slate-800">{myLeaveRequests.filter(lr => lr.status === 'PENDING').length}</p>
+              <p className="text-2xl font-bold text-slate-800">{pendingRequests}</p>
               <p className="text-xs text-slate-500">Pending Requests</p>
             </div>
           </div>
@@ -415,8 +528,8 @@ export default function EmployeeSelfServicePage() {
 
         <div className="bg-white rounded-xl border border-slate-200 p-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
-              <DollarSign size={20} className="text-indigo-600" />
+            <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center shrink-0">
+              <DollarSign size={20} className="text-slate-700" />
             </div>
             <div>
               <p className="text-2xl font-bold text-slate-800">{payslipCount}</p>
@@ -434,7 +547,7 @@ export default function EmployeeSelfServicePage() {
               onClick={() => setActiveTab('overview')}
               className={`px-6 py-3 text-sm font-medium transition-colors ${
                 activeTab === 'overview'
-                  ? 'text-indigo-600 border-b-2 border-indigo-600'
+                  ? 'text-slate-900 border-b-2 border-slate-900'
                   : 'text-slate-600 hover:text-slate-800'
               }`}
             >
@@ -444,7 +557,7 @@ export default function EmployeeSelfServicePage() {
               onClick={() => setActiveTab('leave')}
               className={`px-6 py-3 text-sm font-medium transition-colors ${
                 activeTab === 'leave'
-                  ? 'text-indigo-600 border-b-2 border-indigo-600'
+                  ? 'text-slate-900 border-b-2 border-slate-900'
                   : 'text-slate-600 hover:text-slate-800'
               }`}
             >
@@ -454,7 +567,7 @@ export default function EmployeeSelfServicePage() {
               onClick={() => setActiveTab('attendance')}
               className={`px-6 py-3 text-sm font-medium transition-colors ${
                 activeTab === 'attendance'
-                  ? 'text-indigo-600 border-b-2 border-indigo-600'
+                  ? 'text-slate-900 border-b-2 border-slate-900'
                   : 'text-slate-600 hover:text-slate-800'
               }`}
             >
@@ -464,15 +577,15 @@ export default function EmployeeSelfServicePage() {
               onClick={() => setActiveTab('payslips')}
               className={`px-6 py-3 text-sm font-medium transition-colors ${
                 activeTab === 'payslips'
-                  ? 'text-indigo-600 border-b-2 border-indigo-600'
+                  ? 'text-slate-900 border-b-2 border-slate-900'
                   : 'text-slate-600 hover:text-slate-800'
               }`}
             >
               Payslips
             </button>
-            <button onClick={() => setActiveTab('tasks')} className={`px-6 py-3 text-sm font-medium ${activeTab === 'tasks' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-600'}`}>Tasks</button>
-            <button onClick={() => setActiveTab('documents')} className={`px-6 py-3 text-sm font-medium whitespace-nowrap ${activeTab === 'documents' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-600'}`}>Documents</button>
-            <button onClick={() => setActiveTab('reimbursements')} className={`px-6 py-3 text-sm font-medium whitespace-nowrap ${activeTab === 'reimbursements' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-600'}`}>Reimbursements</button>
+            <button type="button" onClick={() => setActiveTab('tasks')} className={`px-6 py-3 text-sm font-medium ${activeTab === 'tasks' ? 'text-slate-900 border-b-2 border-slate-900' : 'text-slate-600'}`}>Tasks</button>
+            <button type="button" onClick={() => setActiveTab('documents')} className={`px-6 py-3 text-sm font-medium whitespace-nowrap ${activeTab === 'documents' ? 'text-slate-900 border-b-2 border-slate-900' : 'text-slate-600'}`}>Documents</button>
+            <button type="button" onClick={() => setActiveTab('reimbursements')} className={`px-6 py-3 text-sm font-medium whitespace-nowrap ${activeTab === 'reimbursements' ? 'text-slate-900 border-b-2 border-slate-900' : 'text-slate-600'}`}>Reimbursements</button>
           </div>
         </div>
 
@@ -497,7 +610,7 @@ export default function EmployeeSelfServicePage() {
                     </div>
                     <div className="w-full bg-slate-200 rounded-full h-2">
                       <div
-                        className="bg-indigo-600 h-2 rounded-full"
+                        className="bg-slate-800 h-2 rounded-full"
                         style={{ width: `${(leaveBalance.annual.used / leaveBalance.annual.total) * 100}%` }}
                       ></div>
                     </div>
@@ -510,7 +623,7 @@ export default function EmployeeSelfServicePage() {
                   </div>
                   <div className="bg-slate-50 rounded-lg p-4">
                     <p className="text-sm font-medium text-slate-700">Unpaid leave days</p>
-                    <p className="text-2xl font-bold text-slate-800 mt-2">{myLeaveRequests.filter(row => row.status === 'APPROVED' && leaveTypes.find(type => type.id === row.leaveTypeId)?.isPaid === false).reduce((sum, row) => sum + row.totalDays, 0)}</p>
+                    <p className="text-2xl font-bold text-slate-800 mt-2">{myLeaveRequests.filter((row) => row.status === 'APPROVED' && effectiveLeaveTypes.find((type) => type.id === row.leaveTypeId)?.isPaid === false).reduce((sum, row) => sum + row.totalDays, 0)}</p>
                   </div>
                 </div>
               </div>
@@ -553,29 +666,51 @@ export default function EmployeeSelfServicePage() {
             </div>
           )}
 
-          {/* Leave Requests Tab */}
           {activeTab === 'leave' && (
             <div className="space-y-4">
-              <div className="flex justify-between items-center">
+              <div className="flex flex-wrap justify-between items-center gap-3">
                 <h3 className="font-semibold text-slate-800">My Leave Requests</h3>
-                <button className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
-                  Request Leave
+                <button
+                  type="button"
+                  onClick={() => setShowLeaveForm((open) => !open)}
+                  className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium"
+                >
+                  {showLeaveForm ? 'Close form' : 'Request leave'}
                 </button>
               </div>
+
+              {showLeaveForm && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 border border-slate-200 rounded-lg p-4">
+                  <select
+                    value={leaveForm.leaveTypeId}
+                    onChange={(event) => setLeaveForm((prev) => ({ ...prev, leaveTypeId: event.target.value }))}
+                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                  >
+                    <option value="">Leave type</option>
+                    {effectiveLeaveTypes.map((type) => (
+                      <option key={type.id} value={type.id}>{type.name}</option>
+                    ))}
+                  </select>
+                  <input type="date" value={leaveForm.startDate} onChange={(event) => setLeaveForm((prev) => ({ ...prev, startDate: event.target.value }))} className="px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                  <input type="date" value={leaveForm.endDate} onChange={(event) => setLeaveForm((prev) => ({ ...prev, endDate: event.target.value }))} className="px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                  <textarea value={leaveForm.reason} onChange={(event) => setLeaveForm((prev) => ({ ...prev, reason: event.target.value }))} placeholder="Reason (optional)" className="md:col-span-2 px-3 py-2 border border-slate-300 rounded-lg text-sm" rows={2} />
+                  <button type="button" onClick={() => void submitLeaveRequest()} className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm w-fit">Submit leave request</button>
+                </div>
+              )}
 
               {myLeaveRequests.length === 0 ? (
                 <div className="text-center py-12 text-slate-400">
                   <Calendar size={48} className="mx-auto mb-3 opacity-50" />
-                  <p>No leave requests found</p>
+                  <p>No leave requests yet</p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {myLeaveRequests.map(request => (
+                  {myLeaveRequests.map((request) => (
                     <div key={request.id} className="border border-slate-200 rounded-lg p-4">
-                      <div className="flex items-start justify-between mb-3">
+                      <div className="flex items-start justify-between mb-3 gap-3">
                         <div>
                           <p className="font-medium text-slate-800">{getLeaveTypeName(request.leaveTypeId)}</p>
-                          <p className="text-sm text-slate-500">{request.startDate} - {request.endDate}</p>
+                          <p className="text-sm text-slate-500">{request.startDate} - {request.endDate} · {request.totalDays} day{request.totalDays === 1 ? '' : 's'}</p>
                         </div>
                         <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(request.status)}`}>
                           {request.status}
@@ -586,10 +721,11 @@ export default function EmployeeSelfServicePage() {
                           <span className="font-medium">Reason:</span> {request.reason}
                         </p>
                       )}
-                      {request.approvedBy && (
-                        <p className="text-xs text-slate-500">
-                          Approved by {request.approvedBy} on {request.approvedAt}
-                        </p>
+                      {request.status === 'APPROVED' && request.approvedAt && (
+                        <p className="text-xs text-slate-500">Approved {String(request.approvedAt).slice(0, 10)}</p>
+                      )}
+                      {request.status === 'REJECTED' && (
+                        <p className="text-sm text-red-600">Rejected{apiLeave.find((row) => row.id === request.id)?.rejectionReason ? `: ${apiLeave.find((row) => row.id === request.id)?.rejectionReason}` : ''}</p>
                       )}
                     </div>
                   ))}
@@ -598,10 +734,9 @@ export default function EmployeeSelfServicePage() {
             </div>
           )}
 
-          {/* Attendance Tab */}
           {activeTab === 'attendance' && (
             <div className="space-y-6">
-              <h3 className="font-semibold text-slate-800">This Month's Attendance</h3>
+              <h3 className="font-semibold text-slate-800">This month’s attendance</h3>
               
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="bg-emerald-50 rounded-lg p-4 text-center">
@@ -616,28 +751,46 @@ export default function EmployeeSelfServicePage() {
                   <p className="text-3xl font-bold text-red-700">{attendanceStats.absent}</p>
                   <p className="text-sm text-red-600 mt-1">Absent</p>
                 </div>
-                <div className="bg-blue-50 rounded-lg p-4 text-center">
-                  <p className="text-3xl font-bold text-blue-700">{attendanceStats.leave}</p>
-                  <p className="text-sm text-blue-600 mt-1">On Leave</p>
+                <div className="bg-slate-100 rounded-lg p-4 text-center">
+                  <p className="text-3xl font-bold text-slate-800">{attendanceStats.leave}</p>
+                  <p className="text-sm text-slate-600 mt-1">On Leave</p>
                 </div>
               </div>
 
               <div className="bg-slate-50 rounded-lg p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-slate-700">Attendance Rate</span>
-                  <span className="text-sm font-bold text-indigo-600">
+                  <span className="text-sm font-medium text-slate-700">Attendance rate</span>
+                  <span className="text-sm font-bold text-slate-800">
                     {attendanceStats.totalDays === 0 ? 0 : Math.round((attendanceStats.present / attendanceStats.totalDays) * 100)}%
                   </span>
                 </div>
                 <div className="w-full bg-slate-200 rounded-full h-3">
                   <div
-                    className="bg-indigo-600 h-3 rounded-full"
+                    className="bg-slate-800 h-3 rounded-full"
                     style={{ width: `${attendanceStats.totalDays === 0 ? 0 : (attendanceStats.present / attendanceStats.totalDays) * 100}%` }}
                   ></div>
                 </div>
                 <p className="text-xs text-slate-500 mt-2">
-                  {attendanceStats.present} out of {attendanceStats.totalDays} working days
+                  {attendanceStats.present} out of {attendanceStats.totalDays} recorded days
                 </p>
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="text-sm font-medium text-slate-700">History</h4>
+                {myAttendance.length === 0 && <p className="text-sm text-slate-500">No attendance rows for this month yet.</p>}
+                {myAttendance.map((row) => (
+                  <div key={row.id} className="border border-slate-200 rounded-lg p-3 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-medium text-slate-800">{row.attendanceDate}</p>
+                      <p className="text-xs text-slate-500">
+                        {row.clockIn ? `In ${row.clockIn}` : 'No clock in'}
+                        {row.clockOut ? ` · Out ${row.clockOut}` : ''}
+                        {row.clockInSiteName ? ` · ${row.clockInSiteName}` : ''}
+                      </p>
+                    </div>
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(row.status)}`}>{row.status}</span>
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -655,7 +808,39 @@ export default function EmployeeSelfServicePage() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {myPayrollRecords.map((record) => {
+                  {apiPayslips.map((slip) => {
+                    const slipKey = `self-payroll:${slip.id}`;
+                    return (
+                      <div key={slipKey} className="border border-slate-200 rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-3 gap-3">
+                          <div>
+                            <p className="font-medium text-slate-800">Salary · {slip.periodCode}</p>
+                            <p className="text-sm text-slate-500">Pay date {slip.payDate || '—'} · {slip.periodStatus || slip.status}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-lg font-bold text-slate-800">{formatCurrency(slip.netPay)}</p>
+                            <p className="text-xs text-slate-500">Take home</p>
+                          </div>
+                        </div>
+                        <SlipActions
+                          open={openSlip === slipKey}
+                          onToggle={() => setOpenSlip(openSlip === slipKey ? null : slipKey)}
+                          onPrint={() => {
+                            setOpenSlip(slipKey);
+                            window.setTimeout(() => window.print(), 50);
+                          }}
+                        />
+                        {openSlip === slipKey && (
+                          <div className="mt-4 text-sm text-slate-600 space-y-1">
+                            <p>Gross {formatCurrency(slip.grossPay)}</p>
+                            <p>Deductions {formatCurrency(slip.totalDeductions)}</p>
+                            <p>Net {formatCurrency(slip.netPay)}</p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {apiPayslips.length === 0 && myPayrollRecords.map((record) => {
                     const period = getPayrollPeriod(record.payrollPeriodId);
                     const lines = payrollItems.filter((item) => item.payrollRecordId === record.id);
                     const slipKey = `payroll:${record.id}`;
@@ -667,7 +852,7 @@ export default function EmployeeSelfServicePage() {
                             <p className="text-sm text-slate-500">Pay date {period?.payDate || '—'}</p>
                           </div>
                           <div className="text-right">
-                            <p className="text-lg font-bold text-indigo-600">{formatCurrency(record.netPay)}</p>
+                            <p className="text-lg font-bold text-slate-800">{formatCurrency(record.netPay)}</p>
                             <p className="text-xs text-slate-500">Take Home</p>
                           </div>
                         </div>
@@ -713,7 +898,7 @@ export default function EmployeeSelfServicePage() {
                             </p>
                           </div>
                           <div className="text-right">
-                            <p className="text-lg font-bold text-indigo-600">{formatCurrency(slip.net)}</p>
+                            <p className="text-lg font-bold text-slate-800">{formatCurrency(slip.net)}</p>
                             <p className="text-xs text-slate-500">Take Home</p>
                           </div>
                         </div>
@@ -745,21 +930,33 @@ export default function EmployeeSelfServicePage() {
 
           {activeTab === 'tasks' && (
             <div className="space-y-3">
-              <h3 className="font-semibold text-slate-800">Assigned to me</h3>
-              {myTasks.length === 0 && <p className="text-sm text-slate-500">No tasks from your manager yet.</p>}
-              {myTasks.map(task => (
-                <div key={task.id} className="border border-slate-200 rounded-lg p-3 flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p className="font-medium text-slate-800">{task.title}</p>
-                    <p className="text-sm text-slate-500">{task.detail} · due {task.dueDate} · from {task.assignerName}</p>
-                  </div>
-                  <div className="flex gap-2">
-                    {(task.status === 'OPEN' || task.status === 'ASSIGNED' || task.status === 'ACCEPTED') && <button onClick={() => setTasks(prev => prev.map(row => row.id === task.id ? { ...row, status: 'IN_PROGRESS' } : row))} className="px-2 py-1 text-xs bg-amber-50 text-amber-800 rounded">Start</button>}
-                    {task.status !== 'DONE' && task.status !== 'COMPLETED' && <button onClick={() => setTasks(prev => prev.map(row => row.id === task.id ? { ...row, status: row.externalId ? 'COMPLETED' : 'DONE', completedAt: new Date().toISOString() } : row))} className="px-2 py-1 text-xs bg-emerald-50 text-emerald-800 rounded">Mark done</button>}
-                    {(task.status === 'DONE' || task.status === 'COMPLETED') && <span className="text-xs text-emerald-700">{task.status === 'COMPLETED' ? 'COMPLETED' : 'Done'}</span>}
-                  </div>
-                </div>
-              ))}
+              <h3 className="font-semibold text-slate-800">My tasks</h3>
+              {embedded ? (
+                <iframe
+                  title="Wolf personal tasks"
+                  src="/embed/my-tasks"
+                  className="w-full min-h-[70vh] rounded-xl border border-slate-200 bg-white"
+                />
+              ) : (
+                <>
+                  <p className="text-sm text-slate-500">Open Wolf Command to use the full personal task board. Local HRIS task rows stay below when the API is offline.</p>
+                  <a href="/" className="inline-flex text-sm font-medium text-slate-800 underline underline-offset-4">Open Overview tasks</a>
+                  {myTasks.length === 0 && <p className="text-sm text-slate-500">No local tasks listed.</p>}
+                  {myTasks.map((task) => (
+                    <div key={task.id} className="border border-slate-200 rounded-lg p-3 flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="font-medium text-slate-800">{task.title}</p>
+                        <p className="text-sm text-slate-500">{task.detail} · due {task.dueDate} · from {task.assignerName}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        {(task.status === 'OPEN' || task.status === 'ASSIGNED' || task.status === 'ACCEPTED') && <button type="button" onClick={() => setTasks((prev) => prev.map((row) => row.id === task.id ? { ...row, status: 'IN_PROGRESS' } : row))} className="px-2 py-1 text-xs bg-amber-50 text-amber-800 rounded">Start</button>}
+                        {task.status !== 'DONE' && task.status !== 'COMPLETED' && <button type="button" onClick={() => setTasks((prev) => prev.map((row) => row.id === task.id ? { ...row, status: row.externalId ? 'COMPLETED' : 'DONE', completedAt: new Date().toISOString() } : row))} className="px-2 py-1 text-xs bg-emerald-50 text-emerald-800 rounded">Mark done</button>}
+                        {(task.status === 'DONE' || task.status === 'COMPLETED') && <span className="text-xs text-emerald-700">{task.status === 'COMPLETED' ? 'COMPLETED' : 'Done'}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
           )}
 
@@ -806,7 +1003,7 @@ export default function EmployeeSelfServicePage() {
                   ))}
                 </div>
               )}
-              <button id="save-staff-documents" onClick={saveOwnFiles} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium">
+              <button id="save-staff-documents" type="button" onClick={saveOwnFiles} className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium">
                 Save {documentQueue.length} file{documentQueue.length === 1 ? '' : 's'}
               </button>
               {documentSaveSummary && <p role="status" className="text-sm font-medium text-emerald-700">{documentSaveSummary}</p>}
@@ -870,7 +1067,7 @@ export default function EmployeeSelfServicePage() {
                   <input type="number" min="1" value={claimForm.amount} onChange={event => setClaimForm(prev => ({ ...prev, amount: event.target.value }))} placeholder="Amount (IDR)" className="px-3 py-2 border border-slate-300 rounded-lg text-sm" />
                   <input type="file" accept="application/pdf,image/*" onChange={event => { const file = event.target.files?.[0]; if (file) readClaimReceipt(file); }} className="text-sm" />
                   <textarea value={claimForm.description} onChange={event => setClaimForm(prev => ({ ...prev, description: event.target.value }))} placeholder="Description" className="md:col-span-2 px-3 py-2 border border-slate-300 rounded-lg text-sm" rows={2} />
-                  <button onClick={submitOwnClaim} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm w-fit">Submit claim</button>
+                  <button type="button" onClick={() => void submitOwnClaim()} className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm w-fit">Submit claim</button>
                 </div>
                 {claimForm.receiptFileName && <p className="text-xs text-slate-500 mt-2">Receipt: {claimForm.receiptFileName}</p>}
               </div>
@@ -926,7 +1123,7 @@ function SlipActions({
       <button
         type="button"
         onClick={onPrint}
-        className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"
+        className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium"
         title="Save as PDF from the print dialog"
       >
         <Download size={14} /> Download PDF

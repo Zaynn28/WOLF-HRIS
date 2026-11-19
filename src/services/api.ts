@@ -291,6 +291,20 @@ export const leaveApi = {
     const queryString = params.toString();
     return apiRequest<any[]>(`/leave-requests${queryString ? `?${queryString}` : ''}`);
   },
+
+  types: () => apiRequest<any[]>('/leave-types'),
+
+  listSelf: () => apiRequest<any[]>('/self/leave-requests'),
+
+  createSelf: (data: {
+    leave_type_id: string;
+    start_date: string;
+    end_date: string;
+    reason?: string;
+  }) => apiRequest<any>('/self/leave-requests', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
   
   create: (data: any) => apiRequest<any>('/leave-requests', {
     method: 'POST',
@@ -303,6 +317,83 @@ export const leaveApi = {
       body: JSON.stringify({ approved_by: approvedBy }),
     }),
 };
+
+export const selfServiceApi = {
+  attendance: (from?: string, until?: string) => {
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (until) params.set('until', until);
+    const query = params.toString();
+    return apiRequest<any[]>(`/self/attendance${query ? `?${query}` : ''}`);
+  },
+  payslips: () => apiRequest<any[]>('/self/payslips'),
+  reimbursements: () => apiRequest<any[]>('/self/reimbursements'),
+  createReimbursement: (data: {
+    claim_date: string;
+    category: string;
+    amount: number;
+    description: string;
+    receipt?: string;
+    receipt_file_name?: string;
+  }) => apiRequest<any>('/self/reimbursements', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+};
+
+export function mapSelfLeave(row: any) {
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    leaveTypeId: row.leave_type_id,
+    leaveTypeName: row.leave_type_name || 'Leave',
+    leaveTypeCode: row.leave_type_code || '',
+    isPaid: row.is_paid !== false,
+    startDate: row.start_date,
+    endDate: row.end_date,
+    totalDays: Number(row.total_days) || 0,
+    reason: row.reason || '',
+    status: row.status,
+    submittedAt: row.submitted_at,
+    approvedBy: row.approved_by,
+    approvedAt: row.approved_at,
+    rejectionReason: row.rejection_reason,
+  };
+}
+
+export function mapSelfPayslip(row: any) {
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    payrollPeriodId: row.payroll_period_id,
+    periodCode: row.period_code || 'Payroll',
+    startDate: row.start_date,
+    endDate: row.end_date,
+    payDate: row.pay_date,
+    periodStatus: row.period_status,
+    status: row.status,
+    grossPay: Number(row.gross_pay) || 0,
+    totalDeductions: Number(row.total_deductions) || 0,
+    netPay: Number(row.net_pay) || 0,
+  };
+}
+
+export function mapSelfClaim(row: any) {
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    claimDate: row.claim_date,
+    category: row.category as 'TRANSPORT' | 'MEDICAL' | 'OTHER',
+    amount: Number(row.amount) || 0,
+    description: row.description || '',
+    receiptFileName: row.receipt_file_name || undefined,
+    receiptFileSize: row.receipt_file_size || undefined,
+    status: row.status as 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'PAID',
+    rejectionNote: row.rejection_note || undefined,
+    submittedByName: row.submitted_by_name || row.submitted_by || 'Me',
+    submittedAt: row.submitted_at,
+  };
+}
 
 // ============================================
 // PAYROLL API
