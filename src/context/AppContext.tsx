@@ -260,8 +260,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           : await Promise.all([departmentsApi.getAll(), positionsApi.getAll()]);
         if (cancelled) return;
         if (!people.length) {
-          // Employee preview / API without roster — use local hotel demo so ESS payslips work.
-          applyLocalDemoRoster();
+          // Healthy API with an empty roster: keep empty (do not inject hotel mock UUIDs on live).
+          setEmployees([]);
+          setCompanyRecords('ready');
           return;
         }
         const mappedPeople = people.map(mapEmployeeRow);

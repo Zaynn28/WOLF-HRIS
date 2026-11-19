@@ -81,7 +81,32 @@ export function planProfileBasicSalaries(companyId, employees, existingRows) {
   return steps;
 }
 
+function storedComponentMap(row) {
+  let raw = row?.component_amounts;
+  if (typeof raw === "string") {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = null;
+    }
+  }
+  return raw && typeof raw === "object" ? raw : null;
+}
+
 function readComponentAmount(row, code) {
+  // Explicit null basic_salary means "no line" — do not resurrect from a prior presentPayrollLine map.
+  if ((code === "basic" || code === "full_basic")
+    && Object.prototype.hasOwnProperty.call(row, "basic_salary")
+    && row.basic_salary == null) {
+    return null;
+  }
+  const stored = storedComponentMap(row);
+  if (stored && Object.prototype.hasOwnProperty.call(stored, code)) {
+    const amount = wholeFromDb(stored[code]);
+    if (amount != null) return amount;
+    const n = Number(stored[code]);
+    if (Number.isFinite(n)) return Math.trunc(n);
+  }
   if (code === "basic" || code === "full_basic") return wholeFromDb(row.basic_salary);
   if (code === "allowance") return wholeFromDb(row.allowance) ?? 0;
   if (code === "overtime") return wholeFromDb(row.overtime) ?? 0;
@@ -100,15 +125,35 @@ function deductionTotal(view, componentAmounts, row) {
 export function presentPayrollLine(row, structure) {
   if (!row || typeof row !== "object") return null;
   const view = structure?.grossFormula && Array.isArray(structure.components) ? structure : defaultPayrollStructure();
+  const stored = storedComponentMap(row);
   const componentAmounts = {};
-  for (const component of view.components) {
-    componentAmounts[component.code] = readComponentAmount(row, component.code);
+  // Prefer full engine projection when present (includes codes outside structure list).
+  if (stored && !(Object.prototype.hasOwnProperty.call(row, "basic_salary") && row.basic_salary == null)) {
+    for (const [code, value] of Object.entries(stored)) {
+      if (typeof code !== "string" || !/^[a-z][a-z0-9_]{0,31}$/.test(code)) continue;
+      const amount = Number(value);
+      if (!Number.isFinite(amount)) continue;
+      componentAmounts[code] = Math.trunc(amount);
+    }
   }
-  const basic = Object.prototype.hasOwnProperty.call(componentAmounts, "basic")
-    ? componentAmounts.basic
-    : readComponentAmount(row, "basic");
+  for (const component of view.components) {
+    if (!Object.prototype.hasOwnProperty.call(componentAmounts, component.code)) {
+      componentAmounts[component.code] = readComponentAmount(row, component.code);
+    }
+  }
+  const basic = readComponentAmount(row, "basic");
+  if (basic != null) componentAmounts.basic = basic;
+  const hasEngineProjection = Boolean(stored && Object.keys(stored).length > 0);
   const formula = basic == null ? { gross: null, net: null } : evaluatePayroll(view, componentAmounts);
-  const deductions = deductionTotal(view, componentAmounts, row);
+  const deductions = hasEngineProjection
+    ? (wholeFromDb(row.total_deductions) ?? deductionTotal(view, componentAmounts, row))
+    : deductionTotal(view, componentAmounts, row);
+  const gross = hasEngineProjection
+    ? (wholeFromDb(row.gross_pay) ?? formula.gross)
+    : formula.gross;
+  const net = hasEngineProjection
+    ? (wholeFromDb(row.net_pay) ?? formula.net)
+    : formula.net;
   return {
     id: row.id,
     company_id: row.company_id,
@@ -118,14 +163,15 @@ export function presentPayrollLine(row, structure) {
     full_name: row.full_name ?? null,
     department_name: row.department_name ?? null,
     basic_salary: basic,
-    allowance: componentAmounts.allowance ?? 0,
+    allowance: componentAmounts.allowance
+      ?? (wholeFromDb(row.allowance) ?? 0),
     overtime: componentAmounts.overtime ?? 0,
     service_charge: componentAmounts.service_charge ?? 0,
-    gross_pay: formula.gross,
-    formula_gross: formula.gross,
+    gross_pay: gross,
+    formula_gross: gross,
     total_deductions: deductions ?? 0,
-    net_pay: formula.net,
-    formula_net: formula.net,
+    net_pay: net,
+    formula_net: net,
     component_amounts: componentAmounts,
     status: row.status ?? "DRAFT",
   };

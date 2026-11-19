@@ -33,6 +33,8 @@ export function assertHrisDatabaseTarget() {
   const port = Number(process.env.DB_PORT);
   const name = process.env.DB_NAME;
   if (host === '127.0.0.1' && port === 5434 && name === 'atrium_hris_local') return;
+  // Local workstation Postgres used by the WOLFHRIS .env for ESS development.
+  if (host === '127.0.0.1' && port === 5432 && name === 'atrium_hris') return;
   if (
     process.env.WOLF_HR_PRODUCTION_DB === '1' &&
     host === productionHrisSocket &&
@@ -602,6 +604,119 @@ class DatabaseService {
     return result.rows[0];
   }
 
+  async listLeaveTypes() {
+    const result = await this.query(
+      `SELECT id, code, name, default_entitlement, requires_attachment, requires_approval, is_paid, is_active
+       FROM leave_types WHERE is_active = true ORDER BY name`,
+    );
+    return result.rows;
+  }
+
+  async getLeaveRequestsForEmployee(companyId, employeeId) {
+    const result = await this.query(
+      `SELECT lr.*, lt.name AS leave_type_name, lt.code AS leave_type_code, lt.is_paid
+       FROM leave_requests lr
+       JOIN leave_types lt ON lr.leave_type_id = lt.id
+       WHERE lr.company_id = $1 AND lr.employee_id = $2
+       ORDER BY lr.submitted_at DESC`,
+      [companyId, employeeId],
+    );
+    return result.rows;
+  }
+
+  async listAttendanceForEmployee(companyId, employeeId, fromDate, untilDate) {
+    const result = await this.query(
+      `SELECT *,
+         (clock_in_photo_path IS NOT NULL) AS has_clock_in_photo,
+         (clock_out_photo_path IS NOT NULL) AS has_clock_out_photo
+       FROM attendance
+       WHERE company_id = $1 AND employee_id = $2
+         AND attendance_date >= $3::date AND attendance_date <= $4::date
+       ORDER BY attendance_date DESC`,
+      [companyId, employeeId, fromDate, untilDate],
+    );
+    return result.rows;
+  }
+
+  async listSelfPayslips(companyId, employeeId) {
+    const result = await this.query(
+      `SELECT pr.*, pp.period_code, pp.start_date, pp.end_date, pp.pay_date, pp.status AS period_status
+       FROM payroll_records pr
+       JOIN payroll_periods pp ON pp.id = pr.payroll_period_id AND pp.company_id = pr.company_id
+       WHERE pr.company_id = $1 AND pr.employee_id = $2
+         AND (
+           pp.status IN ('CALCULATED', 'UNDER_REVIEW', 'APPROVED', 'FINALIZED', 'LOCKED')
+           OR pr.status IN ('CALCULATED', 'FINALIZED', 'APPROVED')
+         )
+       ORDER BY pp.pay_date DESC NULLS LAST, pp.start_date DESC`,
+      [companyId, employeeId],
+    );
+    return result.rows;
+  }
+
+  async ensureReimbursementTables() {
+    if (this.reimbursementReady) return;
+    await this.query(`CREATE TABLE IF NOT EXISTS reimbursement_claims (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      company_id text NOT NULL,
+      employee_id uuid NOT NULL,
+      claim_date date NOT NULL,
+      category text NOT NULL,
+      amount integer NOT NULL,
+      description text NOT NULL,
+      receipt_file_name text,
+      receipt_file_size integer,
+      receipt_storage_path text,
+      status text NOT NULL DEFAULT 'SUBMITTED',
+      rejection_note text,
+      submitted_by text,
+      submitted_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      reviewed_by text,
+      reviewed_at timestamptz,
+      CONSTRAINT reimbursement_claims_category_check CHECK (category IN ('TRANSPORT', 'MEDICAL', 'OTHER')),
+      CONSTRAINT reimbursement_claims_status_check CHECK (status IN ('SUBMITTED', 'APPROVED', 'REJECTED', 'PAID')),
+      CONSTRAINT reimbursement_claims_amount_check CHECK (amount > 0)
+    )`);
+    await this.query(`CREATE INDEX IF NOT EXISTS reimbursement_claims_employee_idx
+      ON reimbursement_claims (company_id, employee_id, submitted_at DESC)`);
+    this.reimbursementReady = true;
+  }
+
+  async listReimbursementsForEmployee(companyId, employeeId) {
+    await this.ensureReimbursementTables();
+    const result = await this.query(
+      `SELECT * FROM reimbursement_claims
+       WHERE company_id = $1 AND employee_id = $2
+       ORDER BY submitted_at DESC`,
+      [companyId, employeeId],
+    );
+    return result.rows;
+  }
+
+  async createReimbursementClaim(data) {
+    await this.ensureReimbursementTables();
+    const result = await this.query(
+      `INSERT INTO reimbursement_claims (
+         company_id, employee_id, claim_date, category, amount, description,
+         receipt_file_name, receipt_file_size, receipt_storage_path, status, submitted_by
+       ) VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, 'SUBMITTED', $10)
+       RETURNING *`,
+      [
+        data.company_id,
+        data.employee_id,
+        data.claim_date,
+        data.category,
+        data.amount,
+        data.description,
+        data.receipt_file_name ?? null,
+        data.receipt_file_size ?? null,
+        data.receipt_storage_path ?? null,
+        data.submitted_by ?? null,
+      ],
+    );
+    return result.rows[0];
+  }
+
   // ============================================
   // PAYROLL OPERATIONS
   // ============================================
@@ -655,6 +770,7 @@ class DatabaseService {
   }
 
   async getPayrollRecords(periodId, companyId) {
+    await this.ensurePayrollRecordProjectionColumns();
     const result = await this.query(`
       SELECT pr.*, e.full_name, e.employee_code, d.name as department_name
       FROM payroll_records pr
@@ -664,6 +780,99 @@ class DatabaseService {
       ORDER BY e.full_name
     `, [periodId, companyId]);
     return result.rows;
+  }
+
+  async ensurePayrollRecordProjectionColumns() {
+    if (this.payrollRecordProjectionReady) return;
+    await this.query(`ALTER TABLE payroll_records ADD COLUMN IF NOT EXISTS component_amounts JSONB`);
+    await this.query(`ALTER TABLE payroll_records ADD COLUMN IF NOT EXISTS allowance BIGINT NOT NULL DEFAULT 0`);
+    await this.query(`ALTER TABLE payroll_records ADD COLUMN IF NOT EXISTS overtime BIGINT NOT NULL DEFAULT 0`);
+    await this.query(`ALTER TABLE payroll_records ADD COLUMN IF NOT EXISTS service_charge BIGINT NOT NULL DEFAULT 0`);
+    this.payrollRecordProjectionReady = true;
+  }
+
+  /**
+   * Replace period lines with engine projections so Payslip / Processing / ESS share one store.
+   */
+  async upsertPayrollRecordsFromRunLines(companyId, periodId, projectedRows) {
+    await this.ensurePayrollRecordProjectionColumns();
+    if (!periodId || !Array.isArray(projectedRows) || projectedRows.length === 0) return { changed: 0 };
+    return this.transaction(async (client) => {
+      let changed = 0;
+      for (const row of projectedRows) {
+        const result = await client.query(
+          `INSERT INTO payroll_records (
+             payroll_period_id, employee_id, company_id,
+             basic_salary, basic_salary_from_profile,
+             allowance, overtime, service_charge,
+             gross_pay, total_deductions, net_pay, status, component_amounts
+           ) VALUES (
+             $1, $2, $3,
+             $4::bigint, FALSE,
+             $5::bigint, $6::bigint, 0,
+             $7::bigint, $8::bigint, $9::bigint, 'CALCULATED', $10::jsonb
+           )
+           ON CONFLICT (payroll_period_id, employee_id) DO UPDATE SET
+             company_id = EXCLUDED.company_id,
+             basic_salary = EXCLUDED.basic_salary,
+             basic_salary_from_profile = FALSE,
+             allowance = EXCLUDED.allowance,
+             overtime = EXCLUDED.overtime,
+             service_charge = EXCLUDED.service_charge,
+             gross_pay = EXCLUDED.gross_pay,
+             total_deductions = EXCLUDED.total_deductions,
+             net_pay = EXCLUDED.net_pay,
+             status = 'CALCULATED',
+             component_amounts = EXCLUDED.component_amounts,
+             updated_at = CURRENT_TIMESTAMP`,
+          [
+            periodId,
+            row.employee_id,
+            companyId,
+            row.basic_salary,
+            row.allowance ?? 0,
+            row.overtime ?? 0,
+            row.gross_pay,
+            row.total_deductions,
+            row.net_pay,
+            JSON.stringify(row.component_amounts || {}),
+          ],
+        );
+        changed += result.rowCount || 0;
+      }
+      await client.query(
+        `UPDATE payroll_periods
+         SET status = CASE
+           WHEN status IN ('FINALIZED', 'LOCKED', 'APPROVED', 'UNDER_REVIEW') THEN status
+           ELSE 'CALCULATED'
+         END
+         WHERE id = $1 AND company_id = $2`,
+        [periodId, companyId],
+      );
+      return { changed };
+    });
+  }
+
+  async listActiveLoanInstallments(companyId) {
+    try {
+      const result = await this.query(
+        `SELECT employee_id, monthly_installment, remaining_balance, status
+         FROM employee_loans
+         WHERE company_id = $1
+           AND upper(coalesce(status, 'ACTIVE')) IN ('ACTIVE', 'APPROVED')
+           AND coalesce(remaining_balance, monthly_installment, 0) > 0`,
+        [companyId],
+      );
+      const map = new Map();
+      for (const row of result.rows) {
+        const amount = Math.trunc(Number(row.monthly_installment) || 0);
+        if (amount <= 0) continue;
+        map.set(row.employee_id, amount);
+      }
+      return map;
+    } catch {
+      return new Map();
+    }
   }
 
   async copyProfileBasicSalaries(companyId, periodId) {

@@ -408,6 +408,246 @@ app.get('/api/self/documents/:id/file', async (req, res) => {
   }
 });
 
+function presentSelfLeave(row) {
+  return {
+    id: row.id,
+    employee_id: row.employee_id,
+    leave_type_id: row.leave_type_id,
+    leave_type_name: row.leave_type_name,
+    leave_type_code: row.leave_type_code,
+    is_paid: row.is_paid,
+    start_date: String(row.start_date).slice(0, 10),
+    end_date: String(row.end_date).slice(0, 10),
+    total_days: Number(row.total_days),
+    reason: row.reason,
+    status: row.status,
+    submitted_at: row.submitted_at,
+    approved_by: row.approved_by,
+    approved_at: row.approved_at,
+    rejection_reason: row.rejection_reason,
+  };
+}
+
+function presentSelfPayslip(row) {
+  return {
+    id: row.id,
+    employee_id: row.employee_id,
+    payroll_period_id: row.payroll_period_id,
+    period_code: row.period_code,
+    start_date: row.start_date ? String(row.start_date).slice(0, 10) : null,
+    end_date: row.end_date ? String(row.end_date).slice(0, 10) : null,
+    pay_date: row.pay_date ? String(row.pay_date).slice(0, 10) : null,
+    period_status: row.period_status,
+    status: row.status,
+    gross_pay: row.gross_pay,
+    total_deductions: row.total_deductions,
+    net_pay: row.net_pay,
+  };
+}
+
+function presentSelfClaim(row) {
+  return {
+    id: row.id,
+    employee_id: row.employee_id,
+    claim_date: String(row.claim_date).slice(0, 10),
+    category: row.category,
+    amount: row.amount,
+    description: row.description,
+    receipt_file_name: row.receipt_file_name,
+    receipt_file_size: row.receipt_file_size,
+    status: row.status,
+    rejection_note: row.rejection_note,
+    submitted_at: row.submitted_at,
+    reviewed_at: row.reviewed_at,
+  };
+}
+
+function wholeDaysBetween(start, end) {
+  const a = Date.parse(`${start}T00:00:00Z`);
+  const b = Date.parse(`${end}T00:00:00Z`);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return null;
+  return Math.floor((b - a) / 86_400_000) + 1;
+}
+
+app.get('/api/leave-types', async (req, res) => {
+  const gate = hrCompanyGate(req.hrContext);
+  if (gate) return companyDenied(res, gate);
+  if (req.hrContext.workspace !== 'self' && req.hrContext.workspace !== 'hr') return workspaceDenied(res);
+  try {
+    res.json(await db.listLeaveTypes());
+  } catch (error) {
+    console.error(`leave types failed ${error.code || ''}`);
+    res.status(500).json({ error: 'Leave types are not available.' });
+  }
+});
+
+app.get('/api/self/leave-requests', async (req, res) => {
+  const gate = hrCompanyGate(req.hrContext);
+  if (gate) return companyDenied(res, gate);
+  if (req.hrContext.workspace !== 'self' && req.hrContext.workspace !== 'hr') return workspaceDenied(res);
+  if (blockUntilEmployeeRead(res)) return;
+  try {
+    const employee = await db.getEmployeeBySelfUser(req.hrContext.companyId, req.hrContext.userId);
+    if (!employee) return res.status(404).json({ error: 'This login is not linked to an employee record.' });
+    const rows = await db.getLeaveRequestsForEmployee(req.hrContext.companyId, employee.id);
+    res.json(rows.map(presentSelfLeave));
+  } catch (error) {
+    console.error(`self leave list failed ${error.code || ''}`);
+    res.status(500).json({ error: 'Leave requests are not available.' });
+  }
+});
+
+app.post('/api/self/leave-requests', async (req, res) => {
+  const gate = hrCompanyGate(req.hrContext);
+  if (gate) return companyDenied(res, gate);
+  if (req.hrContext.workspace !== 'self' && req.hrContext.workspace !== 'hr') return workspaceDenied(res);
+  if (blockUntilEmployeeRead(res)) return;
+  try {
+    const employee = await db.getEmployeeBySelfUser(req.hrContext.companyId, req.hrContext.userId);
+    if (!employee) return res.status(404).json({ error: 'This login is not linked to an employee record.' });
+    const leaveTypeId = typeof req.body?.leave_type_id === 'string' ? req.body.leave_type_id.trim() : '';
+    const startDate = typeof req.body?.start_date === 'string' ? req.body.start_date.trim().slice(0, 10) : '';
+    const endDate = typeof req.body?.end_date === 'string' ? req.body.end_date.trim().slice(0, 10) : '';
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 500) : '';
+    const totalDays = wholeDaysBetween(startDate, endDate);
+    if (!leaveTypeId || !startDate || !endDate || totalDays == null || totalDays < 1) {
+      return res.status(400).json({ error: 'Leave type, start date, and end date are required.' });
+    }
+    const types = await db.listLeaveTypes();
+    if (!types.some((row) => row.id === leaveTypeId)) {
+      return res.status(400).json({ error: 'That leave type is not available.' });
+    }
+    const request = await db.createLeaveRequest({
+      employee_id: employee.id,
+      leave_type_id: leaveTypeId,
+      start_date: startDate,
+      end_date: endDate,
+      total_days: totalDays,
+      reason: reason || null,
+      company_id: req.hrContext.companyId,
+    });
+    const named = types.find((row) => row.id === leaveTypeId);
+    res.status(201).json(presentSelfLeave({
+      ...request,
+      leave_type_name: named?.name,
+      leave_type_code: named?.code,
+      is_paid: named?.is_paid,
+    }));
+  } catch (error) {
+    console.error(`self leave create failed ${error.code || ''}`);
+    res.status(500).json({ error: 'The leave request was not saved.' });
+  }
+});
+
+app.get('/api/self/attendance', async (req, res) => {
+  const gate = hrCompanyGate(req.hrContext);
+  if (gate) return companyDenied(res, gate);
+  if (req.hrContext.workspace !== 'self' && req.hrContext.workspace !== 'hr') return workspaceDenied(res);
+  if (blockUntilEmployeeRead(res)) return;
+  try {
+    const employee = await db.getEmployeeBySelfUser(req.hrContext.companyId, req.hrContext.userId);
+    if (!employee) return res.status(404).json({ error: 'This login is not linked to an employee record.' });
+    const until = typeof req.query?.until === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.until)
+      ? req.query.until
+      : new Date().toISOString().slice(0, 10);
+    const from = typeof req.query?.from === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.from)
+      ? req.query.from
+      : `${until.slice(0, 8)}01`;
+    const rows = await db.listAttendanceForEmployee(req.hrContext.companyId, employee.id, from, until);
+    res.json(rows.map(presentPunchDay));
+  } catch (error) {
+    console.error(`self attendance failed ${error.code || ''}`);
+    res.status(500).json({ error: 'Attendance is not available.' });
+  }
+});
+
+app.get('/api/self/payslips', async (req, res) => {
+  const gate = hrCompanyGate(req.hrContext);
+  if (gate) return companyDenied(res, gate);
+  if (req.hrContext.workspace !== 'self' && req.hrContext.workspace !== 'hr') return workspaceDenied(res);
+  if (blockUntilEmployeeRead(res)) return;
+  try {
+    const employee = await db.getEmployeeBySelfUser(req.hrContext.companyId, req.hrContext.userId);
+    if (!employee) return res.status(404).json({ error: 'This login is not linked to an employee record.' });
+    const rows = await db.listSelfPayslips(req.hrContext.companyId, employee.id);
+    res.json(rows.map(presentSelfPayslip));
+  } catch (error) {
+    console.error(`self payslips failed ${error.code || ''}`);
+    res.status(500).json({ error: 'Payslips are not available.' });
+  }
+});
+
+app.get('/api/self/reimbursements', async (req, res) => {
+  const gate = hrCompanyGate(req.hrContext);
+  if (gate) return companyDenied(res, gate);
+  if (req.hrContext.workspace !== 'self' && req.hrContext.workspace !== 'hr') return workspaceDenied(res);
+  if (blockUntilEmployeeRead(res)) return;
+  try {
+    const employee = await db.getEmployeeBySelfUser(req.hrContext.companyId, req.hrContext.userId);
+    if (!employee) return res.status(404).json({ error: 'This login is not linked to an employee record.' });
+    const rows = await db.listReimbursementsForEmployee(req.hrContext.companyId, employee.id);
+    res.json(rows.map(presentSelfClaim));
+  } catch (error) {
+    console.error(`self reimbursements failed ${error.code || ''}`);
+    res.status(500).json({ error: 'Reimbursements are not available.' });
+  }
+});
+
+app.post('/api/self/reimbursements', async (req, res) => {
+  const gate = hrCompanyGate(req.hrContext);
+  if (gate) return companyDenied(res, gate);
+  if (req.hrContext.workspace !== 'self' && req.hrContext.workspace !== 'hr') return workspaceDenied(res);
+  if (blockUntilEmployeeRead(res)) return;
+  try {
+    const employee = await db.getEmployeeBySelfUser(req.hrContext.companyId, req.hrContext.userId);
+    if (!employee) return res.status(404).json({ error: 'This login is not linked to an employee record.' });
+    const claimDate = typeof req.body?.claim_date === 'string' ? req.body.claim_date.trim().slice(0, 10) : '';
+    const category = typeof req.body?.category === 'string' ? req.body.category.trim().toUpperCase() : '';
+    const description = typeof req.body?.description === 'string' ? req.body.description.trim().slice(0, 500) : '';
+    const amount = Math.round(Number(req.body?.amount));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(claimDate) || !description || !Number.isSafeInteger(amount) || amount <= 0) {
+      return res.status(400).json({ error: 'Date, description, and an amount greater than 0 are required.' });
+    }
+    if (!['TRANSPORT', 'MEDICAL', 'OTHER'].includes(category)) {
+      return res.status(400).json({ error: 'Choose Transport, Medical, or Other.' });
+    }
+    let receiptFileName = null;
+    let receiptFileSize = null;
+    let receiptStoragePath = null;
+    if (req.body?.receipt) {
+      const parsed = readDocumentPayload({
+        file: req.body.receipt,
+        file_name: req.body.receipt_file_name || 'receipt',
+        document_type_name: 'Reimbursement',
+      });
+      if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+      const id = randomUUID();
+      const relative = documentRelative(req.hrContext.companyId, employee.id, id, parsed.ext);
+      if (!relative) return res.status(400).json({ error: 'The receipt could not be stored.' });
+      await writeStoredDocument(employeeDocumentRoot, relative, parsed.bytes);
+      receiptFileName = parsed.fileName;
+      receiptFileSize = parsed.fileSize;
+      receiptStoragePath = relative;
+    }
+    const row = await db.createReimbursementClaim({
+      company_id: req.hrContext.companyId,
+      employee_id: employee.id,
+      claim_date: claimDate,
+      category,
+      amount,
+      description,
+      receipt_file_name: receiptFileName,
+      receipt_file_size: receiptFileSize,
+      receipt_storage_path: receiptStoragePath,
+      submitted_by: req.hrContext.userId,
+    });
+    res.status(201).json(presentSelfClaim(row));
+  } catch (error) {
+    console.error(`self reimbursement create failed ${error.code || ''}`);
+    res.status(500).json({ error: 'The claim was not saved.' });
+  }
+});
+
 app.get('/api/employees/:id/documents', async (req, res) => {
   const gate = hrCompanyGate(req.hrContext);
   if (gate) return companyDenied(res, gate);
@@ -919,9 +1159,11 @@ app.get('/api/attendance-photos/:id/:side', async (req, res) => {
 app.get('/api/punch-sites', async (req, res) => {
   const gate = hrCompanyGate(req.hrContext);
   if (gate) return companyDenied(res, gate);
-  if (req.hrContext.workspace !== 'hr') return workspaceDenied(res);
+  if (req.hrContext.workspace !== 'hr' && req.hrContext.workspace !== 'self') return workspaceDenied(res);
   try {
-    res.json(await db.listPunchSites(req.hrContext.companyId));
+    const rows = await db.listPunchSites(req.hrContext.companyId);
+    const visible = req.hrContext.workspace === 'self' ? rows.filter((row) => row.active !== false) : rows;
+    res.json(visible);
   } catch {
     res.status(500).json({ error: 'Punch sites are not available.' });
   }
@@ -1682,6 +1924,12 @@ app.get('/api/payroll-records/:periodId', async (req, res) => {
         const rated = structureWithCompanyTariffs(structure, companyStructure) ?? structure;
         const formulaStructure = structure?.grossFormula ? structure : rated;
         for (const line of visible) {
+          // Engine projection already wrote full component_amounts — do not clobber with tariff overlay.
+          const hasEngineProjection = line.component_amounts
+            && typeof line.component_amounts === "object"
+            && Object.keys(line.component_amounts).length > 3
+            && (line.status === "CALCULATED" || line.component_amounts.tax_mode != null || line.component_amounts.ter_gross);
+          if (hasEngineProjection) continue;
           const overlay = applyPayOverlay(line.component_amounts, eligibility.get(line.employee_id), rated);
           line.component_amounts = overlay.amounts;
           line.tariff_missing = overlay.missing;

@@ -1,5 +1,6 @@
 import { calculateEmployeePay, cutoffWindow } from "./payroll-engine.js";
 import { readEmployeePayrollConfig } from "./employee-payroll-config.js";
+import { projectRunLineToRecord } from "./payroll-run-projection.js";
 
 function parsePeriodCode(periodCode) {
   const match = /^(\d{4})-(\d{2})$/.exec(String(periodCode || ""));
@@ -31,7 +32,7 @@ export function summarizeAttendance(rows, presentStatuses, periodStart, periodEn
     const bucket = byEmployee.get(id);
     const status = String(row.status || "").toUpperCase();
     if (statuses.has(status) || status === "PRESENT" || status === "LATE") {
-      if (statuses.has(status) || status === "PRESENT" || status === "LATE") bucket.days_present += 1;
+      bucket.days_present += 1;
     }
     if (status === "UNPAID_LEAVE" || status === "ABSENT") bucket.unpaid_leave_days += 1;
     if (status === "LATE") bucket.late_events += 1;
@@ -68,27 +69,41 @@ export async function generatePayrollRun(db, {
   }
 
   const attendanceMap = summarizeAttendance(attendanceRows, presentStatuses, window.period_start, window.period_end);
+  const loanMap = typeof db.listActiveLoanInstallments === "function"
+    ? await db.listActiveLoanInstallments(companyId)
+    : new Map();
+
   const warnings = [];
   if (!rates) warnings.push("No BPJS rate set is effective for this period. BPJS amounts are zero until rates are saved.");
   if (rates && rates.jkk_bp == null) warnings.push("JKK rate is not set. JKK amounts are zero until Compliance fills it.");
+  if (!Array.isArray(terBrackets) || terBrackets.length === 0) {
+    warnings.push("No TER brackets were provided. PPh 21 amounts are zero until TER tables are sent with Generate.");
+  }
+  if (!attendanceRows.length) {
+    warnings.push(`No attendance rows in cutoff ${window.period_start} … ${window.period_end}. Present days are zero.`);
+  }
 
   const lines = [];
+  let zeroPresent = 0;
   for (const employee of employees) {
     const config = readEmployeePayrollConfig(employee);
     const att = attendanceMap.get(employee.id) || { days_present: 0, unpaid_leave_days: 0, late_events: 0, overtime_minutes: 0 };
     const adj = adjustments[employee.id] || adjustments[employee.employee_code] || {};
+    const daysPresent = adj.days_present != null ? adj.days_present : att.days_present;
+    if (!daysPresent) zeroPresent += 1;
+    const loanDefault = loanMap.get(employee.id) || 0;
     const result = calculateEmployeePay({
       config: { ...config, ptkp_code: employee.ptkp_code || config.ptkp_code },
       settings,
       rates,
       ter_brackets: terBrackets,
-      days_present: adj.days_present != null ? adj.days_present : att.days_present,
+      days_present: daysPresent,
       unpaid_leave_days: adj.unpaid_leave_days != null ? adj.unpaid_leave_days : att.unpaid_leave_days,
       overtime_minutes: adj.overtime_minutes != null ? adj.overtime_minutes : att.overtime_minutes,
       overtime_is_holiday: adj.overtime_is_holiday === true,
       bonus: adj.bonus || 0,
       late_events: adj.late_events != null ? adj.late_events : att.late_events,
-      loan_installment: adj.loan_installment || 0,
+      loan_installment: adj.loan_installment != null ? adj.loan_installment : loanDefault,
       is_probation: isProbation(employee, window.period_end),
       is_december: parsed.month === 12,
       ytd_pph_jan_nov: adj.ytd_pph_jan_nov || 0,
@@ -109,6 +124,9 @@ export async function generatePayrollRun(db, {
       company_tax_cost: result.company_tax_cost,
     });
   }
+  if (zeroPresent > 0) {
+    warnings.push(`${zeroPresent} employee(s) have 0 present days in this cutoff — daily pay and attendance allowance may be zero.`);
+  }
 
   const saved = await db.createPayrollRunVersion(
     companyId,
@@ -122,13 +140,34 @@ export async function generatePayrollRun(db, {
     lines,
   );
 
+  // Project into payroll_records so Processing / Payslip / ESS share engine amounts.
+  let period = await db.findPayrollPeriodByCode(companyId, periodCode);
+  if (!period && typeof db.ensurePayrollPeriod === "function") {
+    const ensured = await db.ensurePayrollPeriod({
+      company_id: companyId,
+      period_code: periodCode,
+      start_date: window.period_start,
+      end_date: window.period_end,
+      pay_date: window.period_end,
+    });
+    period = ensured?.period || ensured;
+  }
+  let projected = 0;
+  if (period?.id && typeof db.upsertPayrollRecordsFromRunLines === "function") {
+    const rows = lines.map((line) => projectRunLineToRecord(line, { periodId: period.id, companyId }));
+    const result = await db.upsertPayrollRecordsFromRunLines(companyId, period.id, rows);
+    projected = result.changed || rows.length;
+  }
+
   return {
     ok: true,
     period_code: periodCode,
+    period_id: period?.id || null,
     period_start: window.period_start,
     period_end: window.period_end,
     ...saved,
     line_count: lines.length,
+    projected_records: projected,
     warnings,
   };
 }

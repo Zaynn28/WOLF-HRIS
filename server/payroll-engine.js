@@ -249,6 +249,8 @@ export function calculateEmployeePay(input) {
       loan_installment: loanInstallment,
       tax_mode: config.tax_mode,
       pay_type: config.pay_type,
+      company_covers_employee_bpjs: config.company_covers_employee_bpjs === true,
+      company_tax_cost,
     },
     gross_earnings,
     total_deductions,

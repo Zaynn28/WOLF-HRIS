@@ -1,24 +1,23 @@
-# Payroll + Service Charge (simple UX) — gap note
+# Payroll + Service Charge — gap note
 
-## Shipped in this slice
+## Fixed (this slice)
 
-- Per-employee **payroll checklist** (`pay_type`, gross fixed + basic %, allowances, BPJS toggles, tax_mode EMPLOYEE|COMPANY) via Salary structure.
-- Server **payroll engine** + `payroll_runs` versioning (generate/overwrite).
-- Unpaid leave = **basic only**.
-- JKK **nullable / not invented**; Compliance form blank by default; generate warns if unset.
-- Payroll components nav moved to **Advanced** (hidden from main sidebar).
-- **Service charge v2**: calendar month, configurable pools, present-status checklist, PKWTT+PKWT default, FLAT PPh, Draft/Publish, Mandiri/BNI/BRI export.
-- Bank adapters: Mandiri, BNI, BRI CSV layouts.
+- **Store split closed:** Generate projects engine `detail` into `payroll_records.component_amounts` (and run snapshots stay in `payroll_run_*`).
+- **Payroll Processing** shows a per-component matrix (not rolled-up Basic/Allowance only).
+- **Payslip / ESS / Salary Detail** read the same projected amounts.
+- Live embed **no longer** silently falls back to hotel demo generate when the API fails; errors surface instead.
+- Empty healthy API roster no longer loads mock demo employees.
+- Generate warnings for missing attendance, TER brackets, BPJS/JKK, and zero present days.
+- Loan installments loaded from `employee_loans` when the table exists.
 
-## Deferred
+## Still deferred
 
-- Full Pasal 17 December true-up tables (engine accepts annual override; UI not yet a wizard).
+- Full Pasal 17 December true-up UI wizard.
 - Consultant verification of BPJS/TER seed numbers.
-- COMPANY tax-mode accounting treatment note for finance.
-- PDF payslip server generation (client export shells remain).
-- Migrating all historical periods into `payroll_run_lines` (new generates only).
-- Removing structure/tariff APIs entirely (read path still exists for legacy).
+- COMPANY tax-mode accounting note for finance.
+- Server-side PDF payslip generation.
+- ESS auto-load of published service-charge months from API (session persist from Service Charge page remains).
 
 ## Deploy
 
-Apply additive SQL on `atrium_hris` (or rely on `ensure*` at runtime), sync WOLFHRIS + wolf proxy into intelligence image when asked.
+Apply `server/sql/payroll-component-amounts-additive.sql` (or rely on `ensurePayrollRecordProjectionColumns`), then ship WOLFHRIS in the intelligence image.

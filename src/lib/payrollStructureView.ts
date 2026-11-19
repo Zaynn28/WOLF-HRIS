@@ -44,6 +44,9 @@ export const defaultPayrollStructure: PayrollStructure = {
     component('basic', 'Basic Salary', 'earning', 20),
     component('transport', 'Tunjangan Transport', 'earning', 30),
     component('komunikasi', 'Tunjangan Komunikasi', 'earning', 40),
+    component('housing', 'Housing', 'earning', 42),
+    component('fixed_allowance', 'Fixed allowance', 'earning', 44),
+    component('attendance_allowance', 'Attendance allowance', 'earning', 46),
     component('bpjsk_allowance', 'BPJS Kesehatan Allowance', 'earning', 50),
     component('jht_allowance', 'JHT Employee Allowance', 'earning', 60),
     component('jp_allowance', 'JP Employee Allowance', 'earning', 70),
@@ -60,6 +63,7 @@ export const defaultPayrollStructure: PayrollStructure = {
     component('jht_company', 'JHT Company', 'earning', 180),
     component('jp_company', 'Jaminan Pensiun Company', 'earning', 190),
     component('bpjsk_company', 'BPJS Kesehatan Company', 'earning', 200),
+    component('pph21_benefit', 'PPh 21 Benefit', 'earning', 210),
   ],
 };
 

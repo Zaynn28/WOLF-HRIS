@@ -6,7 +6,13 @@ import Modal from '../components/Modal';
 import PeriodBar from '../components/PeriodBar';
 import { downloadPayrollExport, PayrollExportFormat } from '../lib/payrollExport';
 import { payrollConfigurationVisible } from '../lib/hr-navigation';
-import { defaultPayrollStructure, payrollProcessingSummary } from '../lib/payrollStructureView';
+import {
+  activePayrollComponents,
+  defaultPayrollStructure,
+  payrollComponentAmount,
+  payrollProcessingSummary,
+} from '../lib/payrollStructureView';
+import { projectRunLinesToClient } from '../lib/payrollRunProjection';
 import { mapPayrollRecord, mapPayrollStructure, payrollApi, payrollRunsApi } from '../services/api';
 import type { PayrollRecord, PayrollStructure } from '../types';
 import BulkUploadButton from '../components/BulkUploadButton';
@@ -48,6 +54,9 @@ export default function PayrollPage({ onConfigure, mode = "run" }: { onConfigure
   const [exportFormat, setExportFormat] = useState<PayrollExportFormat>('csv');
   const [structure, setStructure] = useState<PayrollStructure>(defaultPayrollStructure);
   const [structureSource, setStructureSource] = useState<'loading' | 'company' | 'period' | 'unavailable'>('loading');
+  const [generateWarnings, setGenerateWarnings] = useState<string[]>([]);
+  const [lastGenerateVersion, setLastGenerateVersion] = useState<number | null>(null);
+  const embedded = typeof window !== 'undefined' && window.__WOLF_HR_EMBEDDED__ === true;
 
   useEffect(() => {
     let cancelled = false;
@@ -69,11 +78,18 @@ export default function PayrollPage({ onConfigure, mode = "run" }: { onConfigure
 
   const period = payrollPeriods.find(p => p.id === workingPeriodId);
   const records = payrollRecords.filter(r => r.payrollPeriodId === workingPeriodId);
+  const componentColumns = activePayrollComponents(structure).filter((component) => {
+    // Hide meta-only codes from the processing grid headers when unused across the period.
+    if (component.code === 'full_basic') return false;
+    return true;
+  });
 
   const summaries = records.map((record) => {
     const withheld = record.componentAmounts?.pph21;
-    const stored = payrollItems.find((item) => item.payrollRecordId === record.id && item.componentCode === 'PPh21');
-    const benefit = typeof withheld === 'number' && withheld > 0 ? 0 : (stored?.amount ?? 0);
+    const benefit = record.componentAmounts?.pph21_benefit
+      ?? (typeof withheld === 'number' && withheld > 0
+        ? 0
+        : (payrollItems.find((item) => item.payrollRecordId === record.id && item.componentCode.toLowerCase() === 'pph21')?.amount ?? 0));
     return payrollProcessingSummary(record, benefit);
   });
   const totalBasic = summaries.reduce((sum, row) => sum + row.basic, 0);
@@ -83,13 +99,35 @@ export default function PayrollPage({ onConfigure, mode = "run" }: { onConfigure
   const totalBenefit = summaries.reduce((sum, row) => sum + row.benefit, 0);
   const totalNet = summaries.reduce((sum, row) => sum + row.total, 0);
   const totalGross = records.reduce((sum, record) => sum + record.grossPay, 0);
+  const columnTotals = Object.fromEntries(
+    componentColumns.map((component) => [
+      component.code,
+      records.reduce((sum, record) => sum + (payrollComponentAmount(record, component.code) ?? 0), 0),
+    ]),
+  ) as Record<string, number>;
   const calculatedGross = records.reduce((sum, record) => sum + record.basicSalary + record.allowance + record.overtime, 0);
   const numbersMatch = structure.grossFormula !== 'basic + allowance + overtime' || Math.abs(calculatedGross - totalGross) < 0.01;
+
+  const applyProjectedLines = (target: NonNullable<typeof period>, lines: any[], version?: number) => {
+    const { records: calculated, items: newItems } = projectRunLinesToClient(lines, target.id);
+    setPayrollItems((prev) => [
+      ...prev.filter((item) => !calculated.some((record) => record.id === item.payrollRecordId)),
+      ...newItems,
+    ]);
+    setPayrollRecords((prev) => [
+      ...prev.filter((row) => row.payrollPeriodId !== target.id),
+      ...calculated,
+    ]);
+    if (target.status === 'DRAFT') {
+      setPayrollPeriods((prev) => prev.map((row) => (row.id === target.id ? { ...row, status: 'CALCULATED' as const } : row)));
+    }
+    if (typeof version === 'number') setLastGenerateVersion(version);
+  };
 
   const getEmp = (id: string) => employees.find(e => e.id === id);
   const getDept = (id: string) => departments.find(d => d.id === id)?.name || '-';
 
-  const runLocalDemoGenerate = (target: NonNullable<typeof period>, apiNote?: string) => {
+  const runLocalDemoGenerate = (target: NonNullable<typeof period>) => {
     const { records: calculated, items: newItems, warnings } = generateDemoPayroll({
       period: target,
       employees,
@@ -101,6 +139,7 @@ export default function PayrollPage({ onConfigure, mode = "run" }: { onConfigure
       bpjsRates,
       terTables,
     });
+    setGenerateWarnings(warnings);
     if (warnings.length) addToast(warnings.slice(0, 3).join(' '), 'info');
 
     setPayrollItems((prev) => [
@@ -118,18 +157,14 @@ export default function PayrollPage({ onConfigure, mode = "run" }: { onConfigure
     const gross = calculated.reduce((sum, record) => sum + record.grossPay, 0);
     addAuditLog('CALCULATE', 'PayrollPeriod', workingPeriodId || '', `Payroll ${target.periodCode} demo generate. Gross: ${formatCurrency(gross)}`);
     addNotification('GENERAL', 'Payroll Calculated', `Payroll ${target.periodCode} calculated. Total gross: ${formatCurrency(gross)}`);
-    addToast(
-      apiNote
-        ? `${apiNote} — local demo: ${calculated.length} lines · gross ${formatCurrency(gross)}`
-        : `Payroll ${target.periodCode}: ${calculated.length} lines · gross ${formatCurrency(gross)} (local demo)`,
-      'success',
-    );
+    addToast(`Payroll ${target.periodCode}: ${calculated.length} lines · gross ${formatCurrency(gross)} (local demo)`, 'success');
   };
 
   const handleCalculate = () => {
     if (!period) return;
-    if (typeof window !== 'undefined' && window.__WOLF_HR_EMBEDDED__) {
+    if (embedded) {
       setIsCalculating(true);
+      setGenerateWarnings([]);
       const periodCode = period.periodCode || period.startDate?.slice(0, 7);
       payrollRunsApi.generate(periodCode, {
         ter_brackets: terTables.map((row) => ({
@@ -139,28 +174,36 @@ export default function PayrollPage({ onConfigure, mode = "run" }: { onConfigure
           ter_rate: row.terRate,
         })),
       }).then(async (generated) => {
-        const warnings = Array.isArray(generated.warnings) ? generated.warnings : [];
-        if (warnings.length) addToast(warnings.join(' '), 'info');
-        try {
-          const rows = await payrollApi.getRecords(period.id);
-          const lines = rows.map(mapPayrollRecord).filter((row): row is PayrollRecord => row !== null);
-          if (lines.length) {
+        const warnings = Array.isArray(generated.warnings) ? generated.warnings.map(String) : [];
+        setGenerateWarnings(warnings);
+        if (warnings.length) addToast(warnings.slice(0, 3).join(' '), 'info');
+
+        const runLines = Array.isArray(generated.lines) ? generated.lines : [];
+        if (runLines.length) {
+          applyProjectedLines(period, runLines, Number(generated.version) || undefined);
+        } else {
+          // Fallback: reload projected payroll_records after server upsert.
+          try {
+            const rows = await payrollApi.getRecords(period.id);
+            const lines = rows.map(mapPayrollRecord).filter((row): row is PayrollRecord => row !== null);
+            if (!lines.length) {
+              addToast('Generate finished but returned no employee lines. Check roster and payroll settings.', 'error');
+              return;
+            }
             setPayrollRecords((prev) => [...prev.filter((row) => row.payrollPeriodId !== period.id), ...lines]);
-          } else {
-            runLocalDemoGenerate(period, 'No API payroll lines');
+            if (period.status === 'DRAFT') {
+              setPayrollPeriods((prev) => prev.map((row) => (row.id === period.id ? { ...row, status: 'CALCULATED' as const } : row)));
+            }
+          } catch {
+            addToast('Generate finished but payroll lines could not be loaded.', 'error');
             return;
           }
-        } catch {
-          runLocalDemoGenerate(period, 'Payroll records API unavailable');
-          return;
         }
-        if (period.status === 'DRAFT') {
-          setPayrollPeriods((prev) => prev.map((row) => (row.id === period.id ? { ...row, status: 'CALCULATED' as const } : row)));
-        }
-        addToast(`Generated payroll ${periodCode} (version ${generated.version}). Regenerate anytime.`, 'success');
+        addToast(`Generated payroll ${periodCode} (version ${generated.version}).`, 'success');
         addAuditLog('CREATE', 'PayrollRun', periodCode, `Generated version ${generated.version}`);
+        setLastGenerateVersion(Number(generated.version) || null);
       }).catch((error: unknown) => {
-        runLocalDemoGenerate(period, error instanceof Error ? error.message : 'Payroll API unavailable');
+        addToast(error instanceof Error ? error.message : 'Payroll could not be generated.', 'error');
       }).finally(() => setIsCalculating(false));
       return;
     }
@@ -390,73 +433,98 @@ export default function PayrollPage({ onConfigure, mode = "run" }: { onConfigure
         </div>
       )}
 
+      {generateWarnings.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 space-y-1">
+          <p className="font-medium">Generate notes{lastGenerateVersion != null ? ` · version ${lastGenerateVersion}` : ''}</p>
+          {generateWarnings.map((warning) => (
+            <p key={warning}>{warning}</p>
+          ))}
+        </div>
+      )}
+
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
               <FileText size={16} className="text-slate-500" />
               <h3 className="font-semibold text-slate-800">Payroll Records</h3>
             </div>
-            <p className="text-xs text-slate-500 mt-1">Summary only. Component amounts are set in Payroll components.</p>
+            <p className="text-xs text-slate-500 mt-1">
+              Each payroll component from Generate{lastGenerateVersion != null ? ` (v${lastGenerateVersion})` : ''}. Scroll horizontally for the full matrix.
+            </p>
           </div>
-          <div className="text-sm text-slate-500">{records.length} records</div>
+          <div className="text-sm text-slate-500">{records.length} employees</div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full" data-payroll-structure-source={structureSource} data-payroll-columns="basic,allowance,additional,deduction,benefit,total">
+          <table className="w-full min-w-[960px]" data-payroll-structure-source={structureSource}>
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">Employee</th>
+                <th className="sticky left-0 z-10 bg-slate-50 text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">Employee</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">Department</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Basic salary</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Allowance</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Additional earnings</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Deduction</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Benefit</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Total</th>
+                {componentColumns.map((component) => (
+                  <th key={component.code} className="text-right px-3 py-3 text-xs font-medium text-slate-500 uppercase whitespace-nowrap">
+                    {component.displayName}
+                  </th>
+                ))}
+                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Net</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {records.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-sm text-slate-500">
+                  <td colSpan={componentColumns.length + 3} className="px-4 py-8 text-sm text-slate-500">
                     No payroll lines for {period?.periodCode || 'this month'}. {isFinalized
-                      ? 'This period is closed. Attendance, leave, and overtime for these dates stay as recorded. Service charge is paid separately.'
-                      : 'Choose the pay month to record each stored gaji pokok as basic salary. Employees without a gaji pokok stay off this payroll.'}
+                      ? 'This period is closed. Service charge stays a separate payment.'
+                      : 'Click Generate Payroll after employee checklist settings and attendance are ready.'}
                   </td>
                 </tr>
               )}
-              {records.map((record, index) => {
+              {records.map((record) => {
                 const emp = getEmp(record.employeeId);
-                const summary = summaries[index];
                 return (
                   <tr key={record.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 bg-indigo-100 rounded-full flex items-center justify-center text-xs font-bold text-indigo-600">{emp?.fullName.charAt(0)}</div>
+                    <td className="sticky left-0 z-10 bg-white px-4 py-3">
+                      <div className="flex items-center gap-2 min-w-[160px]">
+                        <div className="w-7 h-7 bg-indigo-100 rounded-full flex items-center justify-center text-xs font-bold text-indigo-600">{emp?.fullName?.charAt(0) || '?'}</div>
                         <div>
-                          <p className="text-sm font-medium text-slate-800">{emp?.fullName}</p>
+                          <p className="text-sm font-medium text-slate-800">{emp?.fullName || record.employeeId}</p>
                           <p className="text-xs text-slate-500">{emp?.employeeCode}</p>
-                          {record.tariffMissing && record.tariffMissing.length > 0 && (
-                            <p className="text-xs font-medium text-amber-700">
-                              Tariff not set: {record.tariffMissing.map((code) => structure.components.find((component) => component.code === code)?.displayName || code).join(', ')}
-                            </p>
-                          )}
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-sm text-slate-600">{emp ? getDept(emp.departmentId) : '-'}</td>
-                    <td className="px-4 py-3 text-sm text-right text-slate-800">{formatCurrency(summary.basic)}</td>
-                    <td className="px-4 py-3 text-sm text-right text-slate-600">{formatCurrency(summary.allowance)}</td>
-                    <td className="px-4 py-3 text-sm text-right text-slate-600">{formatCurrency(summary.additional)}</td>
-                    <td className="px-4 py-3 text-sm text-right text-red-600">{formatCurrency(summary.deduction)}</td>
-                    <td className="px-4 py-3 text-sm text-right text-slate-600">{formatCurrency(summary.benefit)}</td>
-                    <td className="px-4 py-3 text-sm text-right text-emerald-700 font-medium">
-                      {record.formulaIncomplete ? <span className="text-amber-700">Tariff not set</span> : formatCurrency(summary.total)}
+                    <td className="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">{emp ? getDept(emp.departmentId) : '-'}</td>
+                    {componentColumns.map((component) => {
+                      const amount = payrollComponentAmount(record, component.code) ?? 0;
+                      const isDeduction = component.kind === 'deduction';
+                      return (
+                        <td
+                          key={component.code}
+                          className={`px-3 py-3 text-sm text-right tabular-nums whitespace-nowrap ${isDeduction ? 'text-red-600' : 'text-slate-800'}`}
+                        >
+                          {amount ? formatCurrency(amount) : '—'}
+                        </td>
+                      );
+                    })}
+                    <td className="px-4 py-3 text-sm text-right text-emerald-700 font-medium tabular-nums whitespace-nowrap">
+                      {formatCurrency(record.netPay)}
                     </td>
                   </tr>
                 );
               })}
             </tbody>
+            {records.length > 0 && (
+              <tfoot className="bg-slate-50 border-t border-slate-200">
+                <tr>
+                  <td className="sticky left-0 z-10 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-800" colSpan={2}>Totals</td>
+                  {componentColumns.map((component) => (
+                    <td key={component.code} className="px-3 py-3 text-sm text-right font-semibold text-slate-800 tabular-nums whitespace-nowrap">
+                      {columnTotals[component.code] ? formatCurrency(columnTotals[component.code]) : '—'}
+                    </td>
+                  ))}
+                  <td className="px-4 py-3 text-sm text-right font-semibold text-emerald-700 tabular-nums">{formatCurrency(totalNet)}</td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </div>
