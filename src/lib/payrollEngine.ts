@@ -9,6 +9,7 @@ export const defaultPayPolicy: PayPolicy = {
   otHolidayEighth: 3,
   otHolidayAfter: 4,
   serviceChargePercentage: 10,
+  serviceChargePayDay: 15,
   highSeasonDates: [
     '2026-01-01', '2026-01-15', '2026-02-10', '2026-02-11', '2026-03-31',
     '2026-04-01', '2026-04-09', '2026-04-10', '2026-05-01', '2026-05-29',
@@ -168,9 +169,8 @@ export function calculatePeriodPay(input: PeriodPayInput): PeriodPayResult {
   const basicSalary = roundIdr(input.basicSalary);
   const allowance = roundIdr(input.allowance);
   const overtime = roundIdr(input.overtime);
-  const serviceCharge = roundIdr(input.serviceCharge);
   const unpaid = roundIdr(Math.max(0, input.unpaidLeaveDeduction));
-  const grossPay = basicSalary + allowance + overtime + serviceCharge;
+  const grossPay = basicSalary + allowance + overtime;
   const taxable = Math.max(0, grossPay - unpaid);
   const bpjs = bpjsShares(basicSalary + allowance, input.rates);
   const terRate = lookupTerRate(taxable, input.ptkpCode, input.terTables);
@@ -181,7 +181,7 @@ export function calculatePeriodPay(input: PeriodPayInput): PeriodPayResult {
     basicSalary,
     allowance,
     overtime,
-    serviceCharge,
+    serviceCharge: 0,
     unpaidLeaveDeduction: unpaid,
     grossPay,
     bpjsHealth: bpjs.healthEmployee,

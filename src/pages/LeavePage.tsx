@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { CalendarDays, Clock, CheckCircle, XCircle, AlertCircle, AlertTriangle, Shield, Clock as ClockIcon } from 'lucide-react';
 import Modal from '../components/Modal';
+import BulkUploadButton from '../components/BulkUploadButton';
 
 export default function LeavePage() {
   const {

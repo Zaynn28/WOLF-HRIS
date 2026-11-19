@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { bpjsShares } from '../lib/payrollEngine';
+import { payrollRunsApi } from '../services/api';
 import { FileText, Download, Banknote, Building2, AlertTriangle, Save, Loader2 } from 'lucide-react';
 import Modal from '../components/Modal';
 import PeriodBar from '../components/PeriodBar';
+import BulkUploadButton from '../components/BulkUploadButton';
 
 const formatCurrency = (amount: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
 
@@ -19,6 +21,7 @@ export default function IntegrationExportPage() {
     addToast, addAuditLog,
   } = useApp();
   const [exportType, setExportType] = useState<'bank' | 'accounting' | 'ebupot' | 'bpjs'>('bank');
+  const [bankFormat, setBankFormat] = useState<'mandiri' | 'bni' | 'bri'>('mandiri');
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState<string | null>(null);
   const [downloadName, setDownloadName] = useState('');
@@ -81,28 +84,33 @@ export default function IntegrationExportPage() {
     addToast(`${reference} posted to the session accounting book.`, 'success');
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     setExporting(true);
-    setTimeout(() => {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      let content = '';
-      let filename = '';
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    let content = '';
+    let filename = '';
 
+    try {
       if (exportType === 'bank') {
-        // Bank H2H bulk transfer file
-        const lines: string[] = [];
-        lines.push('NO,REKENING,NAMA,NAMA_BANK,JUMLAH,KETERANGAN');
-        let total = 0;
-        records.forEach((r, i) => {
-          const emp = allEmployees.find(e => e.id === r.employeeId);
-          if (emp) {
-            lines.push(`${i + 1},${emp.bankAccountNumber || 'N/A'},${emp.fullName},${emp.bankName || 'N/A'},${r.netPay},Gaji ${period?.periodCode}`);
-            total += r.netPay;
-          }
-        });
-        lines.push(`TOTAL,,,,${total}`);
-        content = lines.join('\n');
-        filename = `bank_transfer_${period?.periodCode}_${timestamp}.csv`;
+        if (typeof window !== 'undefined' && window.__WOLF_HR_EMBEDDED__ && period?.periodCode) {
+          const file = await payrollRunsApi.bank(period.periodCode, bankFormat);
+          content = file.content;
+          filename = file.filename || `${bankFormat}_${period.periodCode}_${timestamp}.csv`;
+        } else {
+          const lines: string[] = [];
+          lines.push('NO,REKENING,NAMA,NAMA_BANK,JUMLAH,KETERANGAN');
+          let total = 0;
+          records.forEach((r, i) => {
+            const emp = allEmployees.find(e => e.id === r.employeeId);
+            if (emp) {
+              lines.push(`${i + 1},${emp.bankAccountNumber || 'N/A'},${emp.fullName},${emp.bankName || 'N/A'},${r.netPay},Gaji ${period?.periodCode}`);
+              total += r.netPay;
+            }
+          });
+          lines.push(`TOTAL,,,,${total}`);
+          content = lines.join('\n');
+          filename = `${bankFormat}_transfer_${period?.periodCode}_${timestamp}.csv`;
+        }
       } else if (exportType === 'accounting') {
         // Accounting journal entries per cost center
         const lines: string[] = [];
@@ -161,8 +169,11 @@ export default function IntegrationExportPage() {
       setDownloadName(filename);
       addAuditLog('EXPORT', `Integration${exportType.toUpperCase()}`, workingPeriodId, `Exported ${exportType} for ${period?.periodCode}`);
       addToast(`${exportTypes.find(t => t.id === exportType)?.label} exported`, 'success');
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'Export failed.', 'error');
+    } finally {
       setExporting(false);
-    }, 800);
+    }
   };
 
   const downloadResult = () => {
@@ -183,8 +194,9 @@ export default function IntegrationExportPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">System Integration & Export</h1>
-          <p className="text-slate-500 text-sm mt-1">Files use the payroll lines of the working period.</p>
+          <p className="text-slate-500 text-sm mt-1">Files use the payroll lines of the working period. Imported journals stay in this ledger and are not posted to finance.</p>
         </div>
+        <BulkUploadButton module="payroll-finance" />
       </div>
 
       <PeriodBar />
@@ -220,6 +232,22 @@ export default function IntegrationExportPage() {
           </button>
         ))}
       </div>
+
+      {exportType === 'bank' && (
+        <div className="flex gap-2 items-center text-sm">
+          <span className="text-slate-600">Bank format</span>
+          {(['mandiri', 'bni', 'bri'] as const).map((bank) => (
+            <button
+              key={bank}
+              type="button"
+              onClick={() => setBankFormat(bank)}
+              className={`px-3 py-1.5 rounded-lg border ${bankFormat === bank ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'border-slate-200 text-slate-600'}`}
+            >
+              {bank.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Export preview and action */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">

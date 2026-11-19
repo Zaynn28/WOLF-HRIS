@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { FileText, AlertTriangle, CheckCircle, XCircle, Calendar, Search } from 'lucide-react';
+import BulkUploadButton from '../components/BulkUploadButton';
 
 export default function ContractManagementPage() {
   const { employees, departments, contracts } = useApp();

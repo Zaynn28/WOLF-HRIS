@@ -1,20 +1,36 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { minutesLate } from '../lib/payrollEngine';
-import { Search, Filter, LogIn, LogOut, AlertCircle } from 'lucide-react';
+import { localDate } from '../lib/localDate';
+import { attendanceApi, attendancePhotoUrl, fingerspotApi, mapAttendanceRow, mapPunchMine } from '../services/api';
+import { Search, Filter, AlertCircle } from 'lucide-react';
 import Modal from '../components/Modal';
+import BulkUploadButton from '../components/BulkUploadButton';
 import ClockCapture, { ClockProof } from '../components/ClockCapture';
-import { punchRejection } from '../lib/officeLocation';
+import type { PunchMine } from '../types';
 
 export default function AttendancePage() {
-  const { attendance, setAttendance, employees, shifts, shiftAssignments, officeLocation, addToast, addAuditLog } = useApp();
+  const { attendance, setAttendance, employees, shifts, offsiteDuties, setOffsiteDuties, addToast, addAuditLog } = useApp();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
-  const [punch, setPunch] = useState<{ id: string; mode: 'in' | 'out' } | null>(null);
-  const [proofView, setProofView] = useState<{ photo?: string; lat?: number; lng?: number; label: string } | null>(null);
+  const [dutyDraft, setDutyDraft] = useState({ employeeId: '', startDate: '', endDate: '', locationNote: '' });
+  const [proofView, setProofView] = useState<{ url?: string; lat?: number; lng?: number; label: string; site?: string | null } | null>(null);
+  const [pendingCorrections, setPendingCorrections] = useState<{ id: string; employee_code: string; full_name: string; attendance_date: string; reason: string; requested_value: { clock_in?: string | null; clock_out?: string | null } }[]>([]);
   const [correction, setCorrection] = useState({ employeeId: '', date: '', type: 'clock_in', value: '', reason: '' });
-  const today = new Date().toISOString().split('T')[0];
+  const [unpaired, setUnpaired] = useState<{ cloud_id: string; pin: string; scanned_at: string }[]>([]);
+  const [pairCode, setPairCode] = useState<Record<string, string>>({});
+  const [mine, setMine] = useState<PunchMine | null | undefined>(undefined);
+  const [mineError, setMineError] = useState('');
+  const [punchMode, setPunchMode] = useState<'in' | 'out' | null>(null);
+  const embedded = typeof window !== 'undefined' && window.__WOLF_HR_EMBEDDED__ === true;
+  const today = localDate();
+  const refreshUnpaired = () => {
+    if (!embedded) return;
+    fingerspotApi.unpaired().then(setUnpaired).catch(() => setUnpaired([]));
+  };
+  useEffect(() => {
+    refreshUnpaired();
+  }, [embedded]);
   const todayAttendance = attendance.filter(a => a.attendanceDate === today);
 
   const filtered = todayAttendance.filter(a => {
@@ -40,83 +56,94 @@ export default function AttendancePage() {
     }
   };
 
-  const resolveShiftId = (employeeId: string, date: string, fallback: string) => {
-    return shiftAssignments.find(row => row.employeeId === employeeId && row.date === date)?.shiftId || fallback;
+  const refreshBoard = async () => {
+    const rows = await attendanceApi.getByDate(today);
+    setAttendance((prev) => [...prev.filter((item) => item.attendanceDate !== today), ...rows.map(mapAttendanceRow)]);
   };
 
-  const savePunch = (captured: ClockProof) => {
-    if (!punch) return;
-    const rejected = punchRejection(captured.photo, captured.latitude, captured.longitude, officeLocation);
-    if (rejected) {
-      addToast(rejected, 'error');
-      return;
-    }
-    const now = new Date();
-    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    const att = attendance.find(row => row.id === punch.id);
-    const shiftId = resolveShiftId(att?.employeeId || '', att?.attendanceDate || today, att?.shiftId || '');
-    const shift = getShift(shiftId);
-    const late = punch.mode === 'in' && shift && !shift.crossesMidnight ? minutesLate(timeStr, shift.startTime) : att?.lateMinutes || 0;
-    setAttendance(prev => prev.map(row => {
-      if (row.id !== punch.id) return row;
-      if (punch.mode === 'out') {
-        return { ...row, clockOut: timeStr, clockOutPhoto: captured.photo, clockOutLat: captured.latitude, clockOutLng: captured.longitude, clockOutAccuracy: captured.accuracy };
+  const refreshCorrections = () => {
+    attendanceApi.corrections().then(setPendingCorrections).catch(() => setPendingCorrections([]));
+  };
+
+  useEffect(() => {
+    refreshCorrections();
+    let cancelled = false;
+    attendanceApi.mine().then((row) => {
+      if (!cancelled) setMine(mapPunchMine(row));
+    }).catch((error: unknown) => {
+      if (!cancelled) {
+        setMine(null);
+        setMineError(error instanceof Error ? error.message : 'Punch is not available for this session.');
       }
-      return {
-        ...row,
-        shiftId,
-        clockIn: timeStr,
-        lateMinutes: late,
-        status: late > 0 ? 'LATE' as const : 'PRESENT' as const,
-        clockInPhoto: captured.photo,
-        clockInLat: captured.latitude,
-        clockInLng: captured.longitude,
-        clockInAccuracy: captured.accuracy,
-      };
-    }));
-    const emp = getEmp(att?.employeeId || '');
-    addToast(`${emp?.fullName} clocked ${punch.mode === 'in' ? 'in' : 'out'} at ${timeStr}`, late > 0 && punch.mode === 'in' ? 'warning' : 'success');
-    setPunch(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const activeDutyToday = (employeeId?: string | null) => {
+    if (!employeeId) return null;
+    return offsiteDuties.find(duty =>
+      duty.status === 'APPROVED'
+      && duty.employeeId === employeeId
+      && duty.startDate <= today
+      && duty.endDate >= today
+    ) || null;
   };
 
-  const handleSubmitCorrection = () => {
-    if (!correction.employeeId || !correction.date || !correction.value || !correction.reason) {
+  const savePunch = async (captured: ClockProof) => {
+    try {
+      const selfId = mine?.day?.employeeId || employees.find(person => person.email)?.id;
+      const duty = activeDutyToday(selfId);
+      const saved = await attendanceApi.punch({
+        photo: captured.photo,
+        latitude: captured.latitude,
+        longitude: captured.longitude,
+        accuracy: captured.accuracy,
+        idempotency_key: crypto.randomUUID(),
+        off_site_duty: Boolean(duty),
+        off_site_location_note: duty?.locationNote || undefined,
+      });
+      const fresh = mapPunchMine(await attendanceApi.mine());
+      setMine(fresh);
+      if (fresh.day) {
+        const day = fresh.day;
+        setAttendance((prev) => [...prev.filter((row) => !(row.employeeId === day.employeeId && row.attendanceDate === day.attendanceDate)), day]);
+      }
+      try {
+        await refreshBoard();
+      } catch {
+        // The punch is already stored. The day board keeps the merged row.
+      }
+      addToast(saved.message || 'Punch recorded.', saved.outcome === 'kept' ? 'warning' : 'success');
+      setPunchMode(null);
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'The punch was not recorded.', 'error');
+    }
+  };
+
+  const handleSubmitCorrection = async () => {
+    const employee = getEmp(correction.employeeId);
+    if (!employee || !correction.date || !correction.value || !correction.reason.trim()) {
       addToast('Please fill in all required fields', 'error');
       return;
     }
-    const shiftId = resolveShiftId(correction.employeeId, correction.date, 's4');
-    const shift = getShift(shiftId);
-    setAttendance(prev => {
-      const index = prev.findIndex(row => row.employeeId === correction.employeeId && row.attendanceDate === correction.date);
-      const apply = (row: typeof prev[number]) => {
-        if (correction.type === 'clock_out') {
-          return { ...row, shiftId, clockOut: correction.value, notes: correction.reason };
-        }
-        const late = shift && !shift.crossesMidnight ? minutesLate(correction.value, shift.startTime) : 0;
-        return {
-          ...row,
-          shiftId,
-          clockIn: correction.value,
-          lateMinutes: late,
-          status: late > 0 ? 'LATE' as const : 'PRESENT' as const,
-          notes: correction.reason,
-        };
-      };
-      if (index < 0) {
-        return [...prev, apply({
-          id: `a${Date.now()}`,
-          employeeId: correction.employeeId,
-          attendanceDate: correction.date,
-          shiftId,
-          status: 'PRESENT',
-        })];
-      }
-      return prev.map((row, i) => i === index ? apply(row) : row);
-    });
-    addAuditLog('UPDATE', 'Attendance', correction.employeeId, `Correction ${correction.type} ${correction.value} on ${correction.date} for ${getEmp(correction.employeeId)?.fullName}: ${correction.reason}`);
-    addToast('Attendance correction saved', 'success');
-    setShowCorrectionModal(false);
-    setCorrection({ employeeId: '', date: '', type: 'clock_in', value: '', reason: '' });
+    try {
+      await attendanceApi.requestCorrection({
+        employee_code: employee.employeeCode,
+        attendance_date: correction.date,
+        clock_in: correction.type === 'clock_in' ? correction.value : undefined,
+        clock_out: correction.type === 'clock_out' ? correction.value : undefined,
+        reason: correction.reason.trim(),
+      });
+      addAuditLog('UPDATE', 'Attendance', correction.employeeId, `Correction requested ${correction.type} ${correction.value} on ${correction.date} for ${employee.fullName}: ${correction.reason.trim()}`);
+      addToast('Attendance correction filed', 'success');
+      setShowCorrectionModal(false);
+      setCorrection({ employeeId: '', date: '', type: 'clock_in', value: '', reason: '' });
+      refreshCorrections();
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'The correction was not filed.', 'error');
+    }
   };
 
   const stats = {
@@ -133,9 +160,87 @@ export default function AttendancePage() {
           <h1 className="text-2xl font-bold text-slate-800">Daily Attendance</h1>
           <p className="text-slate-500 text-sm mt-1">{new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
         </div>
+        <div className="flex gap-2">
+        <BulkUploadButton module="attendance" />
         <button onClick={() => setShowCorrectionModal(true)} className="flex items-center gap-2 px-4 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 text-sm font-medium">
           <AlertCircle size={16} /> Request Correction
         </button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="font-medium text-slate-800">Your punch</p>
+          <p className="text-sm text-slate-500">
+            {mine?.day?.clockIn ? `In ${mine.day.clockIn}` : 'Not clocked in'}
+            {mine?.day?.clockOut ? ` · Out ${mine.day.clockOut}` : ''}
+            {mine?.day?.clockInSiteName ? ` · ${mine.day.clockInSiteName}` : ''}
+          </p>
+          {mine?.blockedReason && <p className="text-sm text-red-600">{mine.blockedReason}</p>}
+          {mine === null && <p className="text-sm text-slate-500">{mineError || 'Punch is not available for this session.'}</p>}
+        </div>
+        <div className="flex gap-2">
+          {mine?.next === 'in' && <button type="button" onClick={() => setPunchMode('in')} className="px-3 py-2 bg-emerald-600 text-white rounded-lg text-sm">Clock in</button>}
+          {mine?.next === 'out' && <button type="button" onClick={() => setPunchMode('out')} className="px-3 py-2 bg-amber-600 text-white rounded-lg text-sm">Clock out</button>}
+        </div>
+      </div>
+      {punchMode && <ClockCapture title={punchMode === 'in' ? 'Clock in' : 'Clock out'} onCancel={() => setPunchMode(null)} onConfirm={savePunch} />}
+
+      <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="font-medium text-slate-800">Off-site duty</p>
+            <p className="text-sm text-slate-500">Approve kerja luar daerah so staff can punch outside the office geofence.</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+          <select value={dutyDraft.employeeId} onChange={e => setDutyDraft(prev => ({ ...prev, employeeId: e.target.value }))} className="px-3 py-2 border rounded-lg text-sm">
+            <option value="">Employee</option>
+            {employees.filter(person => person.employmentStatus === 'ACTIVE' || person.employmentStatus === 'PROBATION').map(person => (
+              <option key={person.id} value={person.id}>{person.fullName}</option>
+            ))}
+          </select>
+          <input type="date" value={dutyDraft.startDate} onChange={e => setDutyDraft(prev => ({ ...prev, startDate: e.target.value }))} className="px-3 py-2 border rounded-lg text-sm" />
+          <input type="date" value={dutyDraft.endDate} onChange={e => setDutyDraft(prev => ({ ...prev, endDate: e.target.value }))} className="px-3 py-2 border rounded-lg text-sm" />
+          <input value={dutyDraft.locationNote} onChange={e => setDutyDraft(prev => ({ ...prev, locationNote: e.target.value }))} placeholder="Location note" className="px-3 py-2 border rounded-lg text-sm" />
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            if (!dutyDraft.employeeId || !dutyDraft.startDate || !dutyDraft.endDate) {
+              addToast('Employee, start date, and end date are required.', 'error');
+              return;
+            }
+            if (dutyDraft.endDate < dutyDraft.startDate) {
+              addToast('End date must be on or after start date.', 'error');
+              return;
+            }
+            const emp = employees.find(person => person.id === dutyDraft.employeeId);
+            setOffsiteDuties(prev => [...prev, {
+              id: `duty${Date.now()}`,
+              employeeId: dutyDraft.employeeId,
+              startDate: dutyDraft.startDate,
+              endDate: dutyDraft.endDate,
+              locationNote: dutyDraft.locationNote || 'Off-site assignment',
+              status: 'APPROVED',
+              createdAt: new Date().toISOString(),
+            }]);
+            addAuditLog('CREATE', 'OffsiteDuty', dutyDraft.employeeId, `${emp?.fullName} off-site ${dutyDraft.startDate}–${dutyDraft.endDate}`);
+            addToast(`Off-site duty approved for ${emp?.fullName}.`, 'success');
+            setDutyDraft({ employeeId: '', startDate: '', endDate: '', locationNote: '' });
+          }}
+          className="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm"
+        >
+          Approve off-site duty
+        </button>
+        {offsiteDuties.filter(duty => duty.status === 'APPROVED' && duty.endDate >= today).length > 0 && (
+          <ul className="text-sm text-slate-600 space-y-1">
+            {offsiteDuties.filter(duty => duty.status === 'APPROVED' && duty.endDate >= today).map(duty => {
+              const emp = employees.find(person => person.id === duty.employeeId);
+              return <li key={duty.id}>{emp?.fullName || duty.employeeId} · {duty.startDate}–{duty.endDate} · {duty.locationNote}</li>;
+            })}
+          </ul>
+        )}
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -159,9 +264,46 @@ export default function AttendancePage() {
             <option value="ABSENT">Absent</option>
             <option value="ON_LEAVE">On Leave</option>
             <option value="REST_DAY">Rest Day</option>
+            <option value="INCOMPLETE">Incomplete</option>
           </select>
         </div>
       </div>
+
+      {embedded && unpaired.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+          <p className="text-sm font-medium text-slate-800">Unpaired fingerprint pins</p>
+          {unpaired.map((row) => {
+            const key = `${row.cloud_id}:${row.pin}`;
+            return (
+              <div key={`${key}:${row.scanned_at}`} className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="font-mono text-slate-700">PIN {row.pin}</span>
+                <span className="text-slate-500">{row.scanned_at}</span>
+                <select value={pairCode[key] || ''} onChange={(event) => setPairCode((prev) => ({ ...prev, [key]: event.target.value }))} className="px-2 py-1 border border-slate-300 rounded">
+                  <option value="">Employee</option>
+                  {employees.map((employee) => (
+                    <option key={employee.id} value={employee.employeeCode}>{employee.employeeCode} {employee.fullName}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="px-3 py-1 rounded bg-slate-900 text-white"
+                  onClick={async () => {
+                    const employeeCode = pairCode[key];
+                    if (!employeeCode) return;
+                    await fingerspotApi.pair({ cloud_id: row.cloud_id, pin: row.pin, employee_code: employeeCode });
+                    const rows = await attendanceApi.getByDate(today);
+                    setAttendance((prev) => [...prev.filter((item) => item.attendanceDate !== today), ...rows.map(mapAttendanceRow)]);
+                    refreshUnpaired();
+                    addToast(`PIN ${row.pin} paired`, 'success');
+                  }}
+                >
+                  Pair
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
@@ -172,6 +314,7 @@ export default function AttendancePage() {
                 <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">Shift</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">Clock In</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">Clock Out</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">Site</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">Status</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">Late (min)</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">Actions</th>
@@ -192,22 +335,16 @@ export default function AttendancePage() {
                     <td className="px-4 py-3 text-sm text-slate-600">{shift?.name || '-'}</td>
                     <td className="px-4 py-3 text-sm text-slate-600">{a.clockIn || '—'}</td>
                     <td className="px-4 py-3 text-sm text-slate-600">{a.clockOut || '—'}</td>
+                    <td className="px-4 py-3 text-sm text-slate-600">{a.clockOutSiteName || a.clockInSiteName || '—'}</td>
                     <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded font-medium ${statusColor(a.status)}`}>{a.status}</span></td>
-                    <td className="px-4 py-3 text-sm text-slate-600">{a.lateMinutes || '—'}</td>
+                    <td className="px-4 py-3 text-sm text-slate-600">{a.lateMinutes ?? '—'}</td>
                     <td className="px-4 py-3">
-                      <div className="flex gap-1">
-                        {!a.clockIn && a.status !== 'ON_LEAVE' && a.status !== 'REST_DAY' && a.status !== 'ABSENT' && (
-                          <button onClick={() => setPunch({ id: a.id, mode: 'in' })} className="p-1.5 bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100" title="Clock In">
-                            <LogIn size={14} />
-                          </button>
+                      <div className="flex gap-2">
+                        {a.hasClockInPhoto && (
+                          <button type="button" onClick={() => setProofView({ url: attendancePhotoUrl(a.id, 'in'), lat: a.clockInLat, lng: a.clockInLng, site: a.clockInSiteName, label: `${emp?.fullName || 'Punch'} clock in` })} className="text-xs text-indigo-700">In photo</button>
                         )}
-                        {a.clockIn && !a.clockOut && (
-                          <button onClick={() => setPunch({ id: a.id, mode: 'out' })} className="p-1.5 bg-amber-50 text-amber-700 rounded hover:bg-amber-100" title="Clock Out">
-                            <LogOut size={14} />
-                          </button>
-                        )}
-                        {(a.clockInPhoto || a.clockOutPhoto) && (
-                          <button onClick={() => setProofView({ photo: a.clockOutPhoto || a.clockInPhoto, lat: a.clockOutLat || a.clockInLat, lng: a.clockOutLng || a.clockInLng, label: emp?.fullName || 'Punch' })} className="px-2 py-1 text-xs text-indigo-700">Proof</button>
+                        {a.hasClockOutPhoto && (
+                          <button type="button" onClick={() => setProofView({ url: attendancePhotoUrl(a.id, 'out'), lat: a.clockOutLat, lng: a.clockOutLng, site: a.clockOutSiteName, label: `${emp?.fullName || 'Punch'} clock out` })} className="text-xs text-indigo-700">Out photo</button>
                         )}
                       </div>
                     </td>
@@ -219,13 +356,43 @@ export default function AttendancePage() {
         </div>
       </div>
 
-      {punch && <ClockCapture title={punch.mode === 'in' ? 'Clock in' : 'Clock out'} onCancel={() => setPunch(null)} onConfirm={savePunch} />}
+      {pendingCorrections.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+          <p className="text-sm font-medium text-slate-800">Pending corrections</p>
+          {pendingCorrections.map((row) => (
+            <div key={row.id} className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-slate-800">{row.full_name}</span>
+              <span className="text-slate-500">{row.attendance_date}</span>
+              <span className="text-slate-500">{row.requested_value?.clock_in ? `In ${row.requested_value.clock_in}` : ''}{row.requested_value?.clock_out ? ` Out ${row.requested_value.clock_out}` : ''}</span>
+              <span className="text-slate-600">{row.reason}</span>
+              <button
+                type="button"
+                className="px-3 py-1 rounded bg-slate-900 text-white"
+                onClick={async () => {
+                  try {
+                    await attendanceApi.approveCorrection(row.id);
+                    addToast('Correction approved', 'success');
+                    refreshCorrections();
+                    await refreshBoard();
+                  } catch (error) {
+                    addToast(error instanceof Error ? error.message : 'The correction was not approved.', 'error');
+                  }
+                }}
+              >
+                Approve
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {proofView && (
         <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center p-4" onClick={() => setProofView(null)}>
           <div className="bg-white rounded-xl p-4 max-w-sm" onClick={event => event.stopPropagation()}>
             <p className="font-medium text-slate-800 mb-2">{proofView.label}</p>
-            {proofView.photo && <img src={proofView.photo} alt="Punch proof" className="rounded-lg mb-2" />}
-            <p className="text-sm text-slate-600">{proofView.lat?.toFixed(5)}, {proofView.lng?.toFixed(5)}</p>
+            {proofView.url && <img src={proofView.url} alt="Punch proof" className="rounded-lg mb-2" />}
+            <p className="text-sm text-slate-600">{proofView.site || 'Punch site'}</p>
+            <p className="text-sm text-slate-600">{proofView.lat != null && proofView.lng != null ? `${proofView.lat.toFixed(5)}, ${proofView.lng.toFixed(5)}` : ''}</p>
           </div>
         </div>
       )}

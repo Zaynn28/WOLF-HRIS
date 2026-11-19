@@ -1,11 +1,12 @@
 import { useApp } from '../context/AppContext';
+import { localDate } from '../lib/localDate';
 import { Users, UserCheck, UserX, CalendarClock, Clock, AlertTriangle, FileWarning, CheckCircle } from 'lucide-react';
 
 interface DashboardProps { onNavigate: (page: string) => void; }
 
 export default function Dashboard({ onNavigate }: DashboardProps) {
-  const { employees, departments, attendance, leaveRequests, overtimeRequests, payrollPeriods, workingPeriodId, contracts } = useApp();
-  const today = new Date().toISOString().split('T')[0];
+  const { employees, departments, attendance, leaveRequests, overtimeRequests, payrollPeriods, workingPeriodId, contracts, companyRecords } = useApp();
+  const today = localDate();
   const todayAttendance = attendance.filter(a => a.attendanceDate === today);
   const presentToday = todayAttendance.filter(a => a.status === 'PRESENT' || a.status === 'LATE').length;
   const absentToday = todayAttendance.filter(a => a.status === 'ABSENT').length;
@@ -39,6 +40,8 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       <div>
         <h1 className="text-2xl font-bold text-slate-800">Command Centre</h1>
         <p className="text-slate-500 text-sm mt-1">Operational overview — {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+        {companyRecords === 'denied' && <p className="text-sm text-rose-700 mt-2">Company records are not available for this session.</p>}
+        {companyRecords === 'ready' && employees.length === 0 && <p className="text-sm text-slate-500 mt-2">No employees are recorded for this company.</p>}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

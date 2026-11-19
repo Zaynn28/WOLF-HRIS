@@ -1,28 +1,215 @@
-import { useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useApp } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
+import { departmentsApi, positionsApi, punchSitesApi } from '../services/api';
 import { departments as initDepts, positions as initPositions, shifts as initShifts, leaveTypes } from '../data/mockData';
 import { Department, Position, Shift, LeaveType } from '../types';
+import { visibleConfigurationTabs } from '../lib/hr-navigation';
 import { cycleForMonth } from '../lib/periodScope';
-import { Settings, Building2, Briefcase, Clock, CalendarDays, Save, Plus, Edit2, Trash2, CheckCircle, XCircle, MapPin } from 'lucide-react';
-import { OFFICE_PUNCH_RADIUS_METERS } from '../lib/officeLocation';
+import { Settings, Building2, Briefcase, Clock, CalendarDays, Save, Plus, Edit2, Trash2, CheckCircle, XCircle, MapPin, DollarSign } from 'lucide-react';
 import Modal from '../components/Modal';
+import { MAX_PUNCH_ACCURACY_METERS } from '../components/ClockCapture';
+import BulkUploadButton from '../components/BulkUploadButton';
+import PayrollStructurePage from './PayrollStructurePage';
 
 interface ConfigurationPageProps { initialTab?: string; }
 
+interface PunchSiteRow {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  radius_meters: number;
+  active: boolean;
+}
+
+function PunchSitesPanel({ addToast }: { addToast: (message: string, type: 'success' | 'error' | 'warning') => void }) {
+  const [sites, setSites] = useState<PunchSiteRow[]>([]);
+  const [draft, setDraft] = useState({ name: '', latitude: '', longitude: '', radius: '100' });
+  const [gpsNote, setGpsNote] = useState('');
+  const [gpsError, setGpsError] = useState(false);
+  const [readingLocation, setReadingLocation] = useState(false);
+
+  const load = () => {
+    punchSitesApi.list().then((rows) => setSites(rows)).catch(() => setSites([]));
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const useHere = () => {
+    if (!navigator.geolocation) {
+      setGpsError(true);
+      setGpsNote('This browser has no location service.');
+      return;
+    }
+    setReadingLocation(true);
+    setGpsError(false);
+    setGpsNote('Waiting for GPS… Allow location access if the browser asks.');
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const accuracy = Math.round(position.coords.accuracy);
+        setReadingLocation(false);
+        if (!Number.isFinite(position.coords.accuracy) || accuracy < 0 || accuracy > MAX_PUNCH_ACCURACY_METERS) {
+          setGpsError(true);
+          setGpsNote(`The location is too coarse${Number.isFinite(accuracy) ? ` (±${accuracy} m)` : ''}. Accuracy must be ${MAX_PUNCH_ACCURACY_METERS} metres or better.`);
+          return;
+        }
+        setDraft((current) => ({
+          ...current,
+          latitude: position.coords.latitude.toFixed(6),
+          longitude: position.coords.longitude.toFixed(6),
+        }));
+        setGpsError(false);
+        setGpsNote(`Location set · ±${accuracy} m. Name the site and save.`);
+      },
+      () => {
+        setReadingLocation(false);
+        setGpsError(true);
+        setGpsNote('Location permission is required. Allow GPS for this site and try again.');
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+    );
+  };
+
+  const save = async () => {
+    const name = draft.name.trim();
+    const latitude = Number(draft.latitude);
+    const longitude = Number(draft.longitude);
+    const radius = Number(draft.radius);
+    if (!name || draft.latitude.trim() === '' || draft.longitude.trim() === '' || !Number.isFinite(latitude) || !Number.isFinite(longitude) || !Number.isInteger(radius)) {
+      addToast('Enter a site name, latitude, longitude, and a whole-metre radius.', 'error');
+      return;
+    }
+    try {
+      await punchSitesApi.create({ name, latitude, longitude, radius_meters: radius, active: true });
+      setDraft({ name: '', latitude: '', longitude: '', radius: '100' });
+      setGpsNote('');
+      setGpsError(false);
+      addToast(`${name} saved.`, 'success');
+      load();
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'The punch site was not saved.', 'error');
+    }
+  };
+
+  const toggle = async (site: PunchSiteRow) => {
+    try {
+      await punchSitesApi.update(site.id, {
+        name: site.name,
+        latitude: Number(site.latitude),
+        longitude: Number(site.longitude),
+        radius_meters: Number(site.radius_meters),
+        active: !site.active,
+      });
+      load();
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'The punch site was not saved.', 'error');
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 p-6 max-w-3xl space-y-4">
+      <div>
+        <h3 className="font-semibold text-slate-800 mb-1">Punch sites</h3>
+        <p className="text-sm text-slate-500">Stand at the site and allow location. The saved point is this device’s GPS. The radius is 30 to 300 metres.</p>
+      </div>
+      {sites.length === 0 && <p className="text-sm text-amber-700">No punch site is set. Phone punches stay blocked.</p>}
+      {sites.map((site) => (
+        <div key={site.id} className="flex flex-wrap items-center justify-between gap-3 border border-slate-200 rounded-lg px-3 py-2">
+          <div>
+            <p className="text-sm font-medium text-slate-800">{site.name}</p>
+            <p className="text-xs text-slate-500">{Number(site.latitude).toFixed(5)}, {Number(site.longitude).toFixed(5)} · {site.radius_meters} m · {site.active ? 'Active' : 'Inactive'}</p>
+          </div>
+          <button type="button" onClick={() => toggle(site)} className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm text-slate-700">{site.active ? 'Deactivate' : 'Activate'}</button>
+        </div>
+      ))}
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" onClick={useHere} disabled={readingLocation} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-60">
+          <MapPin size={14} /> {readingLocation ? 'Reading GPS…' : 'Use this location'}
+        </button>
+        {gpsNote && <p className={`text-sm ${gpsError ? 'text-red-600' : 'text-slate-600'}`}>{gpsNote}</p>}
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="md:col-span-2">
+          <label className="block text-sm font-medium text-slate-700 mb-1">Name</label>
+          <input type="text" value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" placeholder="Site name" />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Latitude</label>
+          <input type="text" inputMode="decimal" value={draft.latitude} onChange={event => setDraft({ ...draft, latitude: event.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Longitude</label>
+          <input type="text" inputMode="decimal" value={draft.longitude} onChange={event => setDraft({ ...draft, longitude: event.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Radius (metres)</label>
+          <input type="number" min={30} max={300} step={1} value={draft.radius} onChange={event => setDraft({ ...draft, radius: event.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+        </div>
+      </div>
+      <button type="button" onClick={save} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">
+        <Save size={14} /> Save punch site
+      </button>
+    </div>
+  );
+}
+
 const formatCurrency = (amount: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
 
+const embedded = typeof window !== 'undefined' && window.__WOLF_HR_EMBEDDED__ === true;
+
+function savedDepartment(row: { id: string; code: string; name: string; description?: string | null; is_active?: boolean }): Department {
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    description: row.description ?? '',
+    isActive: row.is_active !== false,
+  };
+}
+
+function savedPosition(row: { id: string; code: string; title: string; department_id: string; grade?: string | null; description?: string | null; is_active?: boolean }): Position {
+  return {
+    id: row.id,
+    code: row.code,
+    title: row.title,
+    departmentId: row.department_id,
+    grade: row.grade ?? '',
+    description: row.description ?? '',
+    isActive: row.is_active !== false,
+  };
+}
+
+const configurationTabIcons: Record<string, ReactNode> = {
+  departments: <Building2 size={16} />,
+  positions: <Briefcase size={16} />,
+  shifts: <Clock size={16} />,
+  'leave-types': <CalendarDays size={16} />,
+  'payroll-config': <Settings size={16} />,
+  'payroll-configuration': <DollarSign size={16} />,
+  office: <MapPin size={16} />,
+};
+
 export default function ConfigurationPage({ initialTab }: ConfigurationPageProps) {
+  const { user } = useAuth();
   const {
     departments, setDepartments,
     positions, setPositions,
     shifts, setShifts,
     leaveTypes: allLeaveTypes, setLeaveTypes,
     payPolicy, setPayPolicy,
-    officeLocation, setOfficeLocation,
     payrollPeriods, workingPeriodId,
     addToast, addAuditLog,
   } = useApp();
-  const [activeTab, setActiveTab] = useState(initialTab || 'departments');
+  const tabs = visibleConfigurationTabs(user?.role).map((tab) => ({
+    ...tab,
+    icon: configurationTabIcons[tab.id],
+  }));
+  const [activeTab, setActiveTab] = useState(
+    tabs.some((tab) => tab.id === initialTab) ? (initialTab || 'departments') : 'departments',
+  );
   const workingPeriod = payrollPeriods.find(period => period.id === workingPeriodId) || payrollPeriods[0];
   const [windowYear, windowMonth] = (workingPeriod?.periodCode || '2026-01').split('-').map(Number);
   const payCycle = cycleForMonth(windowYear, windowMonth, payPolicy.cutoffDay, payPolicy.payDay);
@@ -50,24 +237,22 @@ export default function ConfigurationPage({ initialTab }: ConfigurationPageProps
   const [editLeaveData, setEditLeaveData] = useState({ code: '', name: '', defaultEntitlement: 0, requiresAttachment: false, requiresApproval: true, isPaid: true, isActive: true });
 
   const [highSeasonDraft, setHighSeasonDraft] = useState(payPolicy.highSeasonDates.join('\n'));
-  const [officeDraft, setOfficeDraft] = useState({
-    name: officeLocation?.name ?? '',
-    latitude: officeLocation ? String(officeLocation.latitude) : '',
-    longitude: officeLocation ? String(officeLocation.longitude) : '',
-  });
-
-  const tabs = [
-    { id: 'departments', label: 'Departments', icon: <Building2 size={16} /> },
-    { id: 'positions', label: 'Positions', icon: <Briefcase size={16} /> },
-    { id: 'shifts', label: 'Shifts', icon: <Clock size={16} /> },
-    { id: 'leave-types', label: 'Leave Types', icon: <CalendarDays size={16} /> },
-    { id: 'payroll-config', label: 'Payroll Config', icon: <Settings size={16} /> },
-    { id: 'office', label: 'Office location', icon: <MapPin size={16} /> },
-  ];
 
   // ============ DEPARTMENTS ============
-  const handleAddDept = () => {
+  const handleAddDept = async () => {
     if (!newDept.code || !newDept.name) { addToast('Code and Name are required', 'error'); return; }
+    if (embedded) {
+      try {
+        const created = await departmentsApi.create({ code: newDept.code, name: newDept.name, description: newDept.description || null });
+        setDepartments(prev => [...prev, savedDepartment(created)]);
+        addToast(`Department "${created.name}" saved for this company`, 'success');
+        setShowAddDept(false);
+        setNewDept({ code: '', name: '', description: '' });
+      } catch {
+        addToast('That department was not saved for this company.', 'error');
+      }
+      return;
+    }
     const dept: Department = { id: 'd' + Date.now(), code: newDept.code, name: newDept.name, description: newDept.description, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     setDepartments(prev => [...prev, dept]);
     addAuditLog('CREATE', 'Department', dept.id, `${dept.name} created`);
@@ -76,26 +261,59 @@ export default function ConfigurationPage({ initialTab }: ConfigurationPageProps
     setNewDept({ code: '', name: '', description: '' });
   };
 
-  const handleSaveDept = () => {
+  const handleSaveDept = async () => {
     if (!editingDept) return;
     if (!editDeptData.code || !editDeptData.name) { addToast('Code and Name are required', 'error'); return; }
+    if (embedded) {
+      try {
+        const saved = await departmentsApi.update(editingDept.id, { code: editDeptData.code, name: editDeptData.name, description: editDeptData.description || null });
+        setDepartments(prev => prev.map(d => d.id === editingDept.id ? savedDepartment(saved) : d));
+        addToast(`Department "${saved.name}" saved for this company`, 'success');
+        setEditingDept(null);
+      } catch {
+        addToast('That department was not saved for this company.', 'error');
+      }
+      return;
+    }
     setDepartments(prev => prev.map(d => d.id === editingDept.id ? { ...d, code: editDeptData.code, name: editDeptData.name, description: editDeptData.description, updatedAt: new Date().toISOString() } : d));
     addAuditLog('UPDATE', 'Department', editingDept.id, `${editingDept.name} updated`);
     addToast(`Department "${editDeptData.name}" updated`, 'success');
     setEditingDept(null);
   };
 
-  const handleDeleteDept = (id: string) => {
+  const handleDeleteDept = async (id: string) => {
     if (!window.confirm('Delete this department? This cannot be undone.')) return;
     const dept = departments.find(d => d.id === id);
+    if (embedded) {
+      try {
+        await departmentsApi.delete(id);
+        setDepartments(prev => prev.filter(d => d.id !== id));
+        addToast(`Department "${dept?.name}" removed from this company`, 'success');
+      } catch {
+        addToast('That department was not removed from this company.', 'error');
+      }
+      return;
+    }
     setDepartments(prev => prev.filter(d => d.id !== id));
     addAuditLog('DELETE', 'Department', id, `${dept?.name} deleted`);
     addToast(`Department "${dept?.name}" deleted`, 'success');
   };
 
   // ============ POSITIONS ============
-  const handleAddPos = () => {
+  const handleAddPos = async () => {
     if (!newPos.code || !newPos.title || !newPos.departmentId) { addToast('Code, Title, and Department are required', 'error'); return; }
+    if (embedded) {
+      try {
+        const created = await positionsApi.create({ code: newPos.code, title: newPos.title, department_id: newPos.departmentId, grade: newPos.grade || null, description: newPos.description || null });
+        setPositions(prev => [...prev, savedPosition(created)]);
+        addToast(`Position "${created.title}" saved for this company`, 'success');
+        setShowAddPos(false);
+        setNewPos({ code: '', title: '', departmentId: '', grade: '', description: '' });
+      } catch {
+        addToast('That position was not saved for this company.', 'error');
+      }
+      return;
+    }
     const pos: Position = { id: 'p' + Date.now(), code: newPos.code, title: newPos.title, departmentId: newPos.departmentId, grade: newPos.grade || 'S1', description: newPos.description, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     setPositions(prev => [...prev, pos]);
     addAuditLog('CREATE', 'Position', pos.id, `${pos.title} created`);
@@ -104,18 +322,39 @@ export default function ConfigurationPage({ initialTab }: ConfigurationPageProps
     setNewPos({ code: '', title: '', departmentId: '', grade: '', description: '' });
   };
 
-  const handleSavePos = () => {
+  const handleSavePos = async () => {
     if (!editingPos) return;
     if (!editPosData.code || !editPosData.title || !editPosData.departmentId) { addToast('Code, Title, and Department are required', 'error'); return; }
+    if (embedded) {
+      try {
+        const saved = await positionsApi.update(editingPos.id, { code: editPosData.code, title: editPosData.title, department_id: editPosData.departmentId, grade: editPosData.grade || null, description: editPosData.description || null });
+        setPositions(prev => prev.map(p => p.id === editingPos.id ? savedPosition(saved) : p));
+        addToast(`Position "${saved.title}" saved for this company`, 'success');
+        setEditingPos(null);
+      } catch {
+        addToast('That position was not saved for this company.', 'error');
+      }
+      return;
+    }
     setPositions(prev => prev.map(p => p.id === editingPos.id ? { ...p, code: editPosData.code, title: editPosData.title, departmentId: editPosData.departmentId, grade: editPosData.grade, description: editPosData.description, updatedAt: new Date().toISOString() } : p));
     addAuditLog('UPDATE', 'Position', editingPos.id, `${editingPos.title} updated`);
     addToast(`Position "${editPosData.title}" updated`, 'success');
     setEditingPos(null);
   };
 
-  const handleDeletePos = (id: string) => {
+  const handleDeletePos = async (id: string) => {
     if (!window.confirm('Delete this position? This cannot be undone.')) return;
     const pos = positions.find(p => p.id === id);
+    if (embedded) {
+      try {
+        await positionsApi.delete(id);
+        setPositions(prev => prev.filter(p => p.id !== id));
+        addToast(`Position "${pos?.title}" removed from this company`, 'success');
+      } catch {
+        addToast('That position was not removed from this company.', 'error');
+      }
+      return;
+    }
     setPositions(prev => prev.filter(p => p.id !== id));
     addAuditLog('DELETE', 'Position', id, `${pos?.title} deleted`);
     addToast(`Position "${pos?.title}" deleted`, 'success');
@@ -177,33 +416,10 @@ export default function ConfigurationPage({ initialTab }: ConfigurationPageProps
     addToast(`Leave type "${lt?.name}" deleted`, 'success');
   };
 
-  // ============ PAYROLL CONFIG ============
-  const handleSaveOffice = () => {
-    const name = officeDraft.name.trim();
-    const latitude = Number(officeDraft.latitude);
-    const longitude = Number(officeDraft.longitude);
-    if (!name || officeDraft.latitude.trim() === '' || officeDraft.longitude.trim() === '' || !Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
-      addToast('Enter a place name and a latitude between -90 and 90 and a longitude between -180 and 180.', 'error');
-      return;
-    }
-    setOfficeLocation({ name, latitude, longitude });
-    setOfficeDraft({ name, latitude: String(latitude), longitude: String(longitude) });
-    addAuditLog('UPDATE', 'Configuration', 'office-location', `Office pin set: ${name} (${latitude}, ${longitude})`);
-    addToast(`Office location saved. Punches must be within ${OFFICE_PUNCH_RADIUS_METERS.toLocaleString('en-US')} m of this pin.`, 'success');
-  };
-
-  const handleClearOffice = () => {
-    if (!window.confirm('Clear the office pin? Clock-in and clock-out stay blocked until a pin is set.')) return;
-    setOfficeLocation(null);
-    setOfficeDraft({ name: '', latitude: '', longitude: '' });
-    addAuditLog('UPDATE', 'Configuration', 'office-location', 'Office pin cleared');
-    addToast('Office pin cleared. Punches stay blocked until a pin is set.', 'success');
-  };
-
   const handleSavePayrollConfig = () => {
     const dates = highSeasonDraft.split(/[\s,]+/).map(date => date.trim()).filter(Boolean);
     setPayPolicy(prev => ({ ...prev, highSeasonDates: dates }));
-    addAuditLog('UPDATE', 'Configuration', 'payroll', `Pay policy saved: cutoff=${payPolicy.cutoffDay}, pay day=${payPolicy.payDay}, service charge=${payPolicy.serviceChargePercentage}%`);
+    addAuditLog('UPDATE', 'Configuration', 'payroll', `Pay policy saved: cutoff=${payPolicy.cutoffDay}, pay day=${payPolicy.payDay}, service charge pay day=${payPolicy.serviceChargePayDay}, service charge=${payPolicy.serviceChargePercentage}%`);
     addToast('Pay policy saved. Payroll, leave, overtime, and service charge read these settings.', 'success');
   };
 
@@ -211,8 +427,13 @@ export default function ConfigurationPage({ initialTab }: ConfigurationPageProps
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><Settings size={24} className="text-indigo-600" /> Configuration</h1>
-        <p className="text-slate-500 text-sm mt-1">Manage departments, positions, shifts, leave types, the office pin, payroll parameters, and regulatory settings</p>
+        <p className="text-slate-500 text-sm mt-1">Manage departments, positions, shifts, leave types, punch sites, payroll parameters, and regulatory settings</p>
       </div>
+      {(activeTab === 'departments' || activeTab === 'positions' || activeTab === 'shifts') && (
+        <div className="flex justify-end">
+          <BulkUploadButton module={activeTab} />
+        </div>
+      )}
 
       <div className="flex gap-2 overflow-x-auto pb-2">
         {tabs.map(t => (
@@ -226,7 +447,10 @@ export default function ConfigurationPage({ initialTab }: ConfigurationPageProps
       {activeTab === 'departments' && (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
-            <h3 className="font-semibold text-slate-800">Departments</h3>
+            <div>
+              <h3 className="font-semibold text-slate-800">Departments</h3>
+              {embedded && departments.length === 0 && <p className="text-xs text-slate-500 mt-1">No departments are recorded for this company. Existing unassigned departments stay hidden.</p>}
+            </div>
             <button onClick={() => setShowAddDept(true)} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700"><Plus size={14} /> Add Department</button>
           </div>
           <div className="overflow-x-auto">
@@ -379,7 +603,7 @@ export default function ConfigurationPage({ initialTab }: ConfigurationPageProps
       {activeTab === 'payroll-config' && (
         <div className="space-y-6">
           <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 text-sm text-indigo-800">
-            Payroll reads basic salary and fixed allowance from each payroll record, overtime from approved requests, and service charge from a saved distribution. BPJS and PPh 21 come from Regulatory Compliance. These fields are the pay policy those screens share.
+            Payroll reads basic salary and fixed allowance from each payroll record, and overtime from approved requests. Service charge is paid on its own mid-month date and is not added to salary. BPJS and PPh 21 come from Compliance. These fields are the pay policy those screens share.
           </div>
           <div className="bg-white rounded-xl border border-slate-200 p-6">
             <h3 className="font-semibold text-slate-800 mb-1">Pay policy</h3>
@@ -393,7 +617,12 @@ export default function ConfigurationPage({ initialTab }: ConfigurationPageProps
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Payment day</label>
                 <input type="number" value={payPolicy.payDay} min={1} max={28} onChange={e => setPayPolicy({ ...payPolicy, payDay: parseInt(e.target.value) || 5 })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
-                <p className="text-xs text-slate-500 mt-1">Paid on this day of the following month.</p>
+                <p className="text-xs text-slate-500 mt-1">Salary is paid on this day of the following month.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Service charge pay day</label>
+                <input type="number" value={payPolicy.serviceChargePayDay} min={1} max={28} onChange={e => setPayPolicy({ ...payPolicy, serviceChargePayDay: parseInt(e.target.value) || 15 })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                <p className="text-xs text-slate-500 mt-1">Service charge is paid on this day of the same month as salary, not on the salary pay day.</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Default service charge %</label>
@@ -442,39 +671,9 @@ export default function ConfigurationPage({ initialTab }: ConfigurationPageProps
         </div>
       )}
 
-      {activeTab === 'office' && (
-        <div className="bg-white rounded-xl border border-slate-200 p-6 max-w-2xl">
-          <h3 className="font-semibold text-slate-800 mb-1">Office location</h3>
-          <p className="text-sm text-slate-500 mb-4">
-            Clock-in and clock-out can be saved only within {OFFICE_PUNCH_RADIUS_METERS.toLocaleString('en-US')} m of this pin. It is kept for this session and starts empty, so punches stay blocked until you set it.
-          </p>
-          <p className="text-sm text-slate-700 mb-4">
-            {officeLocation
-              ? `Current pin: ${officeLocation.name} (${officeLocation.latitude}, ${officeLocation.longitude}).`
-              : 'No office pin is set. Clock-in and clock-out stay blocked.'}
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-slate-700 mb-1">Name or address</label>
-              <input type="text" value={officeDraft.name} onChange={e => setOfficeDraft({ ...officeDraft, name: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" placeholder="Hotel name and street address" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Latitude</label>
-              <input type="text" inputMode="decimal" value={officeDraft.latitude} onChange={e => setOfficeDraft({ ...officeDraft, latitude: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" placeholder="Latitude" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Longitude</label>
-              <input type="text" inputMode="decimal" value={officeDraft.longitude} onChange={e => setOfficeDraft({ ...officeDraft, longitude: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" placeholder="Longitude" />
-            </div>
-          </div>
-          <div className="flex gap-2 mt-4">
-            <button type="button" onClick={handleSaveOffice} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">
-              <Save size={14} /> Save office location
-            </button>
-            <button type="button" onClick={handleClearOffice} className="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50">Clear pin</button>
-          </div>
-        </div>
-      )}
+      {activeTab === 'payroll-configuration' && <PayrollStructurePage />}
+
+      {activeTab === 'office' && <PunchSitesPanel addToast={addToast} />}
 
       {/* ============ ADD MODALS ============ */}
       {/* Add Department Modal */}

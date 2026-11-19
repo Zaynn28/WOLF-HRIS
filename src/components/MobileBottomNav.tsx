@@ -9,13 +9,15 @@ interface MobileBottomNavProps {
 export default function MobileBottomNav({ currentPage, onNavigate }: MobileBottomNavProps) {
   const { user } = useAuth();
 
-  const navItems = [
-    { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
-    { id: 'employees', label: 'People', icon: Users },
-    { id: 'daily-attendance', label: 'Attendance', icon: Clock },
-    { id: 'leave', label: 'Leave', icon: CalendarDays },
-    { id: 'employee-self-service', label: 'My HR', icon: UserCircle },
-  ];
+  const navItems = user?.role === 'EMPLOYEE'
+    ? [{ id: 'employee-self-service', label: 'My HR', icon: UserCircle }]
+    : [
+        { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
+        { id: 'employees', label: 'People', icon: Users },
+        { id: 'daily-attendance', label: 'Attendance', icon: Clock },
+        { id: 'leave', label: 'Leave', icon: CalendarDays },
+        { id: 'employee-self-service', label: 'My HR', icon: UserCircle },
+      ];
 
   return (
     <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-700 z-40">

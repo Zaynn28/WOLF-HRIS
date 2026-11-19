@@ -18,6 +18,8 @@ import ReportsPage from './pages/ReportsPage';
 import ConfigurationPage from './pages/ConfigurationPage';
 import ContractManagementPage from './pages/ContractManagementPage';
 import HiringPage from './pages/HiringPage';
+import OnboardingPage from './pages/OnboardingPage';
+import OffboardingPage from './pages/OffboardingPage';
 import EmployeeSelfServicePage from './pages/EmployeeSelfServicePage';
 import ServiceChargePage from './pages/ServiceChargePage';
 import ComplianceConfigurationPage from './pages/ComplianceConfigurationPage';
@@ -35,6 +37,11 @@ function AppContent() {
 
   useEffect(() => {
     if (!user) return;
+    const requested = new URLSearchParams(window.location.search).get("page");
+    if (requested === "employees" && user.role !== "EMPLOYEE") {
+      setCurrentPage("employees");
+      return;
+    }
     if (user.role === 'EMPLOYEE') setCurrentPage('employee-self-service');
     else if (user.role === 'FINANCIAL_CONTROLLER' || user.role === 'FINANCE') setCurrentPage('integration-export');
     else if (user.role === 'PAYROLL') setCurrentPage('payroll');
@@ -47,9 +54,12 @@ function AppContent() {
   }
 
   const renderPage = () => {
+    if (user?.role === "EMPLOYEE") return <EmployeeSelfServicePage />;
     switch (currentPage) {
       case 'dashboard': return <Dashboard onNavigate={setCurrentPage} />;
       case 'hiring': return <HiringPage />;
+      case 'onboarding': return <OnboardingPage />;
+      case 'offboarding': return <OffboardingPage />;
       case 'employees': return <EmployeesPage />;
       case 'departments': return <ConfigurationPage initialTab="departments" />;
       case 'positions': return <ConfigurationPage initialTab="positions" />;
@@ -60,7 +70,11 @@ function AppContent() {
       case 'overtime': return <OvertimePage />;
       case 'payroll':
       case 'payroll-periods':
-      case 'payroll-calculation': return <PayrollPage />;
+      case 'payroll-calculation': return <PayrollPage onConfigure={() => setCurrentPage('payroll-configuration')} />;
+      case 'tax-simulation': return <PayrollPage mode="tax" />;
+      case 'payroll-structure':
+      case 'payroll-configuration': return <ConfigurationPage initialTab="payroll-configuration" />;
+      case 'salary-structure': return <EmployeesPage heading="Salary structure" />;
       case 'service-charge-distribution': return <ServiceChargePage />;
       case 'contracts': return <ContractManagementPage />;
       case 'reports': return <ReportsPage />;
@@ -83,6 +97,8 @@ function AppContent() {
     const titles: Record<string, string> = {
       'dashboard': 'Command Centre',
       'hiring': 'Hiring',
+      'onboarding': 'Onboarding',
+      'offboarding': 'Offboarding',
       'employees': 'Employees',
       'departments': 'Departments',
       'positions': 'Positions',
@@ -91,14 +107,18 @@ function AppContent() {
       'corrections': 'Attendance Corrections',
       'leave': 'Leave Management',
       'overtime': 'Overtime',
-      'payroll': 'Payroll',
+      'payroll': 'Payroll processing',
+      'payroll-structure': 'Payroll components',
+      'payroll-configuration': 'Payroll components',
+      'tax-simulation': 'Tax simulation',
+      'salary-structure': 'Salary structure',
       'payroll-periods': 'Payroll Periods',
       'payroll-calculation': 'Payroll Calculation',
-      'service-charge-distribution': 'Service Charge Distribution',
+      'service-charge-distribution': 'Service charge',
       'contracts': 'Contract Management',
       'reports': 'Reports',
       'configuration': 'Configuration',
-      'compliance': 'Regulatory Compliance',
+      'compliance': 'Compliance',
       'integration-export': 'Integration & Export',
       'employee-self-service': 'My Dashboard',
       'documents': 'Documents',

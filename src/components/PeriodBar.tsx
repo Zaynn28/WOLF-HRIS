@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { cycleForMonth, periodScope } from '../lib/periodScope';
-import type { PayrollPeriod } from '../types';
+import { mapPayrollPeriod, mapPayrollRecord, payrollApi } from '../services/api';
+import type { PayrollPeriod, PayrollRecord } from '../types';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -111,8 +112,9 @@ export default function PeriodBar() {
     payrollPeriods, setPayrollPeriods,
     workingPeriodId, setWorkingPeriodId,
     payPolicy, attendance, overtimeRequests, leaveRequests, leaveTypes,
-    serviceChargeDistributions, payrollRecords, addToast,
+    serviceChargeDistributions, payrollRecords, setPayrollRecords, addToast,
   } = useApp();
+  const opening = useRef(false);
 
   const period = payrollPeriods.find(row => row.id === workingPeriodId) || payrollPeriods[payrollPeriods.length - 1];
   const today = new Date();
@@ -121,22 +123,50 @@ export default function PeriodBar() {
 
   const chooseMonth = (value: string) => {
     if (!/^\d{4}-\d{2}$/.test(value)) return;
-    const existing = payrollPeriods.find(row => row.periodCode === value);
-    if (existing) {
-      setWorkingPeriodId(existing.id);
+    const embedded = typeof window !== 'undefined' && window.__WOLF_HR_EMBEDDED__ === true;
+    if (!embedded) {
+      const existing = payrollPeriods.find(row => row.periodCode === value);
+      if (existing) {
+        setWorkingPeriodId(existing.id);
+        return;
+      }
+      const [year, month] = value.split('-').map(Number);
+      const cycle = cycleForMonth(year, month, payPolicy.cutoffDay, payPolicy.payDay);
+      const created: PayrollPeriod = {
+        id: `pp${Date.now()}`,
+        ...cycle,
+        status: 'DRAFT',
+        createdBy: 'u1',
+      };
+      setPayrollPeriods(prev => [...prev, created]);
+      setWorkingPeriodId(created.id);
+      addToast(`${cycle.periodCode} is the working period for payroll, service charge, and export.`, 'success');
       return;
     }
+    if (opening.current) return;
+    opening.current = true;
     const [year, month] = value.split('-').map(Number);
     const cycle = cycleForMonth(year, month, payPolicy.cutoffDay, payPolicy.payDay);
-    const created: PayrollPeriod = {
-      id: `pp${Date.now()}`,
-      ...cycle,
-      status: 'DRAFT',
-      createdBy: 'u1',
-    };
-    setPayrollPeriods(prev => [...prev, created]);
-    setWorkingPeriodId(created.id);
-    addToast(`${cycle.periodCode} is the working period for payroll, service charge, and export.`, 'success');
+    const known = payrollPeriods.some(row => row.periodCode === cycle.periodCode);
+    payrollApi.createPeriod({
+      period_code: cycle.periodCode,
+      start_date: cycle.startDate,
+      end_date: cycle.endDate,
+      pay_date: cycle.payDate,
+    }).then(async (saved) => {
+      const mapped = mapPayrollPeriod(saved);
+      if (!mapped) throw new Error('period');
+      const rows = await payrollApi.getRecords(mapped.id);
+      const lines = rows.map(mapPayrollRecord).filter((row): row is PayrollRecord => row !== null);
+      setPayrollPeriods(prev => [...prev.filter(row => row.id !== mapped.id && row.periodCode !== mapped.periodCode), mapped]);
+      setPayrollRecords(prev => [...prev.filter(row => row.payrollPeriodId !== mapped.id), ...lines]);
+      setWorkingPeriodId(mapped.id);
+      if (!known) addToast(`${mapped.periodCode} is the working period for payroll.`, 'success');
+    }).catch(() => {
+      addToast('That payroll period could not be opened.', 'error');
+    }).finally(() => {
+      opening.current = false;
+    });
   };
 
   return (
@@ -155,7 +185,7 @@ export default function PeriodBar() {
       )}
       {scope && (
       <p className="text-xs text-slate-500">
-        Loaded for this month: {scope.attendanceCount} attendance rows, {scope.approvedOt} approved overtime{scope.pendingOt > 0 ? ` (${scope.pendingOt} pending)` : ''}, {scope.approvedLeave} approved leave{scope.unpaidDays > 0 ? ` (${scope.unpaidDays} unpaid days)` : ''}, {scope.distributedEmployees === 0 ? 'service charge not distributed' : `${scope.distributedEmployees} service-charge shares`}, {scope.records} payroll lines. Payroll, service charge, and export stay on this month.
+        Loaded for this month: {scope.attendanceCount} attendance rows, {scope.approvedOt} approved overtime{scope.pendingOt > 0 ? ` (${scope.pendingOt} pending)` : ''}, {scope.approvedLeave} approved leave{scope.unpaidDays > 0 ? ` (${scope.unpaidDays} unpaid days)` : ''}, {scope.distributedEmployees === 0 ? 'service charge not saved' : `${scope.distributedEmployees} service-charge shares`}, {scope.records} payroll lines. Service charge is paid mid-month, separate from salary.
       </p>
       )}
     </div>

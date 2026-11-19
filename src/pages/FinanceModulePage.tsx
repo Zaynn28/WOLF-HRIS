@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { Role, ReimbursementClaim } from '../types';
 import Modal from '../components/Modal';
+import BulkUploadButton from '../components/BulkUploadButton';
 import { Wallet, Receipt, Landmark } from 'lucide-react';
 
 const formatCurrency = (amount: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
@@ -168,9 +169,12 @@ export function ReimbursementsPage() {
           <h1 className="text-2xl font-bold text-slate-800">Reimbursement</h1>
           <p className="text-slate-500 text-sm mt-1">Submitted claims wait for Finance or the Director to approve, reject, or mark paid.</p>
         </div>
-        {submitter && (
-          <button onClick={() => setShowForm(true)} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Submit claim</button>
-        )}
+        <div className="flex gap-2">
+          <BulkUploadButton module="reimbursements" />
+          {submitter && (
+            <button onClick={() => setShowForm(true)} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Submit claim</button>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -352,6 +356,7 @@ export function EmployeeLoansPage() {
         <h1 className="text-2xl font-bold text-slate-800">Employee Loan</h1>
         <p className="text-slate-500 text-sm mt-1">HR or Finance records the loan and each repayment. The installment is what payroll staff can see is owed. This does not change payroll calculation.</p>
       </div>
+      <div className="flex justify-end"><BulkUploadButton module="loans" /></div>
 
       {manager && (
         <div className="bg-white rounded-xl border border-slate-200 p-4 grid grid-cols-1 md:grid-cols-2 gap-3">

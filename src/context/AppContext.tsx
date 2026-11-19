@@ -1,5 +1,8 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
-import { Employee, Department, Position, Shift, Attendance, LeaveRequest, OvertimeRequest, PayrollPeriod, PayrollRecord, EmployeeDocument, DocumentType, AuditLog, Notification, ServiceChargeConfig, ServiceChargeDistribution, PayrollItem, PTKPTable, TERTable, BPJSRates, UMKTable, ComplianceRule, THRCalculation, OffboardingCalculation, EmployeeLoan, LoanRepayment, ReimbursementClaim, LeaveType, PayPolicy, OfficeLocation, ShiftAssignment, Applicant, EmploymentContract, PayrollPack, AccountingPost, StaffTask, CompanyAsset } from '../types';
+import { Employee, Department, Position, Shift, Attendance, LeaveRequest, OvertimeRequest, PayrollPeriod, PayrollRecord, EmployeeDocument, DocumentType, AuditLog, Notification, ServiceChargeConfig, ServiceChargeDistribution, ServiceChargeEmployeeSlip, PayrollItem, PTKPTable, TERTable, BPJSRates, UMKTable, ComplianceRule, THRCalculation, OffboardingCalculation, EmployeeLoan, LoanRepayment, ReimbursementClaim, LeaveType, PayPolicy, OfficeLocation, ShiftAssignment, Applicant, EmploymentContract, PayrollPack, AccountingPost, StaffTask, CompanyAsset, OnboardingMaterial, OnboardingActivity, OffsiteDuty, TilLedgerEntry } from '../types';
+import { localDate } from '../lib/localDate';
+import { attendanceApi, checkApiHealth, departmentsApi, employeesApi, importsApi, mapAttendanceRow, mapEmployeeRow, mapPunchMine, mapStaffTask, positionsApi, staffTasksApi } from '../services/api';
+import { applyImportGroups } from '../lib/companyImport';
 import { defaultPayPolicy } from '../lib/payrollEngine';
 import { cycleForMonth, defaultWorkingPeriodId } from '../lib/periodScope';
 import {
@@ -28,6 +31,7 @@ import {
   documents as initDocuments,
   auditLogs as initAuditLogs,
   notifications as initNotifications,
+  employmentContracts as initEmploymentContracts,
 } from '../data/mockData';
 
 const initialDocumentTypes: DocumentType[] = [
@@ -37,6 +41,18 @@ const initialDocumentTypes: DocumentType[] = [
   { id: 'dt-bank', name: 'Bank account', active: true },
   { id: 'dt-contract', name: 'Contract', active: true },
   { id: 'dt-photo', name: 'Photo', active: true },
+  { id: 'dt-skill', name: 'Skill certificate', active: true },
+  { id: 'dt-bpjs-tk', name: 'BPJS TK', active: true },
+  { id: 'dt-bpjs-kes', name: 'BPJS Kesehatan', active: true },
+];
+
+const initialOnboardingActivities: OnboardingActivity[] = [
+  { id: 'ktp', label: 'KTP received' },
+  { id: 'npwp', label: 'NPWP received' },
+  { id: 'bank', label: 'Bank account confirmed' },
+  { id: 'orientation', label: 'Orientation done' },
+  { id: 'uniform', label: 'Uniform / name tag issued' },
+  { id: 'slideshow', label: 'Onboarding slideshow completed' },
 ];
 
 interface Toast {
@@ -112,10 +128,20 @@ interface AppContextType {
   setReimbursements: React.Dispatch<React.SetStateAction<ReimbursementClaim[]>>;
   serviceChargeDistributions: ServiceChargeDistribution[];
   setServiceChargeDistributions: React.Dispatch<React.SetStateAction<ServiceChargeDistribution[]>>;
+  serviceChargeSlips: ServiceChargeEmployeeSlip[];
+  setServiceChargeSlips: React.Dispatch<React.SetStateAction<ServiceChargeEmployeeSlip[]>>;
   documents: EmployeeDocument[];
   setDocuments: React.Dispatch<React.SetStateAction<EmployeeDocument[]>>;
   documentTypes: DocumentType[];
   setDocumentTypes: React.Dispatch<React.SetStateAction<DocumentType[]>>;
+  onboardingMaterials: OnboardingMaterial[];
+  setOnboardingMaterials: React.Dispatch<React.SetStateAction<OnboardingMaterial[]>>;
+  onboardingActivities: OnboardingActivity[];
+  setOnboardingActivities: React.Dispatch<React.SetStateAction<OnboardingActivity[]>>;
+  offsiteDuties: OffsiteDuty[];
+  setOffsiteDuties: React.Dispatch<React.SetStateAction<OffsiteDuty[]>>;
+  tilLedger: TilLedgerEntry[];
+  setTilLedger: React.Dispatch<React.SetStateAction<TilLedgerEntry[]>>;
   auditLogs: AuditLog[];
   setAuditLogs: React.Dispatch<React.SetStateAction<AuditLog[]>>;
   notifications: Notification[];
@@ -127,29 +153,34 @@ interface AppContextType {
   addNotification: (type: Notification['type'], title: string, message: string) => void;
   markNotificationRead: (id: string) => void;
   markAllNotificationsRead: () => void;
+  applyCompanyImport: (moduleId: string, result: { refresh?: string | null; rows?: { natural_key: string; payload: Record<string, unknown> }[] }) => Promise<void>;
+  companyRecords: 'local' | 'loading' | 'ready' | 'denied';
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+const wolfEmbedded = typeof window !== 'undefined' && window.__WOLF_HR_EMBEDDED__ === true;
+
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [employees, setEmployees] = useState<Employee[]>(initEmployees);
+  const [employees, setEmployees] = useState<Employee[]>(wolfEmbedded ? [] : initEmployees);
   const [applicants, setApplicants] = useState<Applicant[]>([]);
-  const [contracts, setContracts] = useState<EmploymentContract[]>([]);
+  const [contracts, setContracts] = useState<EmploymentContract[]>(wolfEmbedded ? [] : initEmploymentContracts);
   const [payrollPacks, setPayrollPacks] = useState<PayrollPack[]>([]);
   const [accountingPosts, setAccountingPosts] = useState<AccountingPost[]>([]);
   const [tasks, setTasks] = useState<StaffTask[]>([]);
   const [companyAssets, setCompanyAssets] = useState<CompanyAsset[]>([]);
-  const [departments, setDepartments] = useState<Department[]>(initDepartments);
-  const [positions, setPositions] = useState<Position[]>(initPositions);
+  const [departments, setDepartments] = useState<Department[]>(wolfEmbedded ? [] : initDepartments);
+  const [positions, setPositions] = useState<Position[]>(wolfEmbedded ? [] : initPositions);
   const [shifts, setShifts] = useState<Shift[]>(initShifts);
-  const [attendance, setAttendance] = useState<Attendance[]>(initAttendance);
+  const [attendance, setAttendance] = useState<Attendance[]>(wolfEmbedded ? [] : initAttendance);
   const [shiftAssignments, setShiftAssignments] = useState<ShiftAssignment[]>(initShiftAssignments);
   const [payPolicy, setPayPolicy] = useState<PayPolicy>(defaultPayPolicy);
   const [officeLocation, setOfficeLocation] = useState<OfficeLocation | null>(null);
-  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(initLeaveRequests);
-  const [overtimeRequests, setOvertimeRequests] = useState<OvertimeRequest[]>(initOvertime);
-  const [payrollPeriods, setPayrollPeriods] = useState<PayrollPeriod[]>(initPayrollPeriods);
-  const [workingPeriodId, setWorkingPeriodId] = useState(defaultWorkingPeriodId(initPayrollPeriods));
+  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(wolfEmbedded ? [] : initLeaveRequests);
+  const [overtimeRequests, setOvertimeRequests] = useState<OvertimeRequest[]>(wolfEmbedded ? [] : initOvertime);
+  const [payrollPeriods, setPayrollPeriods] = useState<PayrollPeriod[]>(wolfEmbedded ? [] : initPayrollPeriods);
+  const [workingPeriodId, setWorkingPeriodId] = useState(defaultWorkingPeriodId(wolfEmbedded ? [] : initPayrollPeriods));
+  const [companyRecords, setCompanyRecords] = useState<'local' | 'loading' | 'ready' | 'denied'>(wolfEmbedded ? 'loading' : 'local');
 
   useEffect(() => {
     setPayrollPeriods(prev => {
@@ -166,10 +197,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return changed ? next : prev;
     });
   }, [payPolicy.cutoffDay, payPolicy.payDay]);
-  const [payrollRecords, setPayrollRecords] = useState<PayrollRecord[]>(initPayrollRecords);
+  const [payrollRecords, setPayrollRecords] = useState<PayrollRecord[]>(wolfEmbedded ? [] : initPayrollRecords);
   const [payrollItems, setPayrollItems] = useState<PayrollItem[]>(initPayrollItems);
   const [serviceChargeConfigs, setServiceChargeConfigs] = useState<ServiceChargeConfig[]>(initServiceChargeConfigs);
   const [serviceChargeDistributions, setServiceChargeDistributions] = useState<ServiceChargeDistribution[]>(initServiceChargeDistributions);
+  const [serviceChargeSlips, setServiceChargeSlips] = useState<ServiceChargeEmployeeSlip[]>([]);
   const [ptkpTables, setPTKPTables] = useState<PTKPTable[]>(initPTKPTables);
   const [terTables, setTERTables] = useState<TERTable[]>(initTERTables);
   const [bpjsRates, setBPJSRates] = useState<BPJSRates[]>(initBPJSRates);
@@ -183,13 +215,136 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [reimbursements, setReimbursements] = useState<ReimbursementClaim[]>([]);
   const [documents, setDocuments] = useState<EmployeeDocument[]>(initDocuments);
   const [documentTypes, setDocumentTypes] = useState<DocumentType[]>(initialDocumentTypes);
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(initAuditLogs);
+  const [onboardingMaterials, setOnboardingMaterials] = useState<OnboardingMaterial[]>([]);
+  const [onboardingActivities, setOnboardingActivities] = useState<OnboardingActivity[]>(initialOnboardingActivities);
+  const [offsiteDuties, setOffsiteDuties] = useState<OffsiteDuty[]>([]);
+  const [tilLedger, setTilLedger] = useState<TilLedgerEntry[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(wolfEmbedded ? [] : initAuditLogs);
+
+  const applyLocalDemoRoster = useCallback(() => {
+    setEmployees(initEmployees);
+    setDepartments(initDepartments);
+    setPositions(initPositions);
+    setAttendance(initAttendance);
+    setLeaveRequests(initLeaveRequests);
+    setOvertimeRequests(initOvertime);
+    setPayrollPeriods(initPayrollPeriods);
+    setWorkingPeriodId(defaultWorkingPeriodId(initPayrollPeriods));
+    setContracts(initEmploymentContracts);
+    setPayrollRecords(initPayrollRecords);
+    setPayrollItems(initPayrollItems);
+    setCompanyRecords('local');
+  }, []);
+
+  useEffect(() => {
+    if (!wolfEmbedded) return;
+    let cancelled = false;
+    (async () => {
+      const healthy = await checkApiHealth();
+      if (!healthy) {
+        if (!cancelled) applyLocalDemoRoster();
+        return;
+      }
+      try {
+        let people;
+        let selfService = false;
+        try {
+          people = await employeesApi.getAll();
+        } catch {
+          selfService = true;
+          const self = await employeesApi.getSelf();
+          people = self ? [self] : [];
+        }
+        const [units, roles] = selfService
+          ? await Promise.all([departmentsApi.getAll().catch(() => []), positionsApi.getAll().catch(() => [])])
+          : await Promise.all([departmentsApi.getAll(), positionsApi.getAll()]);
+        if (cancelled) return;
+        if (!people.length) {
+          // Employee preview / API without roster — use local hotel demo so ESS payslips work.
+          applyLocalDemoRoster();
+          return;
+        }
+        const mappedPeople = people.map(mapEmployeeRow);
+        setEmployees(mappedPeople);
+        setDepartments(units.map((row) => ({
+          id: row.id,
+          code: row.code,
+          name: row.name,
+          description: row.description ?? '',
+          parentDepartmentId: row.parent_department_id ?? undefined,
+          managerEmployeeId: row.manager_employee_id ?? undefined,
+          isActive: row.is_active !== false,
+        })));
+        setPositions(roles.map((row) => ({
+          id: row.id,
+          code: row.code,
+          title: row.title,
+          departmentId: row.department_id,
+          grade: row.grade ?? '',
+          description: row.description ?? '',
+          isActive: row.is_active !== false,
+        })));
+        try {
+          const taskRows = await staffTasksApi.getAll();
+          if (!cancelled) {
+            setTasks(taskRows.map((row) => mapStaffTask(row)).filter((row): row is StaffTask => row !== null));
+          }
+        } catch {
+          if (!cancelled) setTasks([]);
+        }
+        try {
+          const imported = await importsApi.list();
+          if (!cancelled) {
+            applyImportGroups(imported.rows || {}, { employees: mappedPeople, leaveTypes, shifts }, {
+              setShifts, setAttendance, setLeaveRequests, setOvertimeRequests, setApplicants, setContracts,
+              setDocuments, setCompanyAssets, setPayrollPeriods, setPayrollRecords, setPayrollPacks,
+              setServiceChargeDistributions, setAccountingPosts, setReimbursements, setEmployeeLoans, setWorkingPeriodId,
+            });
+          }
+        } catch {
+          // Company screens still open when the import store is unavailable.
+        }
+        try {
+          const today = localDate();
+          const rows = await attendanceApi.getByDate(today);
+          if (!cancelled) {
+            const mapped = rows.map(mapAttendanceRow);
+            setAttendance((prev) => [...prev.filter((row) => row.attendanceDate !== today), ...mapped]);
+          }
+        } catch {
+          try {
+            const mine = mapPunchMine(await attendanceApi.mine());
+            if (!cancelled && mine.day) {
+              const day = mine.day;
+              setAttendance((prev) => [...prev.filter((row) => !(row.employeeId === day.employeeId && row.attendanceDate === day.attendanceDate)), day]);
+            }
+          } catch {
+            // This session cannot read the company day board.
+          }
+        }
+        setCompanyRecords('ready');
+      } catch {
+        if (!cancelled) applyLocalDemoRoster();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyLocalDemoRoster]);
   const [notifications, setNotifications] = useState<Notification[]>(initNotifications);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const addToast = useCallback((message: string, type: Toast['type']) => {
     const id = Date.now().toString() + Math.random();
-    setToasts(prev => [...prev, { id, message, type }]);
+    let added = true;
+    setToasts(prev => {
+      if (prev.some((toast) => toast.message === message && toast.type === type)) {
+        added = false;
+        return prev;
+      }
+      return [...prev, { id, message, type }];
+    });
+    if (!added) return;
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 4000);
@@ -234,6 +389,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setNotifications(prev => prev.map(n => ({ ...n, readAt: new Date().toISOString() })));
   }, []);
 
+  const applyCompanyImport = useCallback(async (moduleId: string, result: { refresh?: string | null; rows?: { natural_key: string; payload: Record<string, unknown> }[] }) => {
+    if (result.refresh === 'employees') {
+      setEmployees((await employeesApi.getAll()).map(mapEmployeeRow));
+      return;
+    }
+    if (result.refresh === 'departments') {
+      const units = await departmentsApi.getAll();
+      setDepartments(units.map(row => ({
+        id: row.id,
+        code: row.code,
+        name: row.name,
+        description: row.description ?? '',
+        parentDepartmentId: row.parent_department_id ?? undefined,
+        managerEmployeeId: row.manager_employee_id ?? undefined,
+        isActive: row.is_active !== false,
+      })));
+      return;
+    }
+    if (result.refresh === 'positions') {
+      const roles = await positionsApi.getAll();
+      setPositions(roles.map(row => ({
+        id: row.id,
+        code: row.code,
+        title: row.title,
+        departmentId: row.department_id,
+        grade: row.grade ?? '',
+        description: row.description ?? '',
+        isActive: row.is_active !== false,
+      })));
+      return;
+    }
+    if (result.refresh === 'tasks') {
+      const taskRows = await staffTasksApi.getAll();
+      setTasks(taskRows.map(row => mapStaffTask(row)).filter((row): row is StaffTask => row !== null));
+      return;
+    }
+    if (result.rows) {
+      applyImportGroups({ [moduleId]: result.rows }, { employees, leaveTypes, shifts }, {
+        setShifts, setAttendance, setLeaveRequests, setOvertimeRequests, setApplicants, setContracts,
+        setDocuments, setCompanyAssets, setPayrollPeriods, setPayrollRecords, setPayrollPacks,
+        setServiceChargeDistributions, setAccountingPosts, setReimbursements, setEmployeeLoans, setWorkingPeriodId,
+      });
+    }
+  }, [employees, leaveTypes, shifts]);
+
   return (
     <AppContext.Provider value={{
       employees, setEmployees,
@@ -258,6 +458,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       payrollItems, setPayrollItems,
       serviceChargeConfigs, setServiceChargeConfigs,
       serviceChargeDistributions, setServiceChargeDistributions,
+      serviceChargeSlips, setServiceChargeSlips,
       ptkpTables, setPTKPTables,
       terTables, setTERTables,
       bpjsRates, setBPJSRates,
@@ -271,10 +472,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       reimbursements, setReimbursements,
       documents, setDocuments,
       documentTypes, setDocumentTypes,
+      onboardingMaterials, setOnboardingMaterials,
+      onboardingActivities, setOnboardingActivities,
+      offsiteDuties, setOffsiteDuties,
+      tilLedger, setTilLedger,
       auditLogs, setAuditLogs,
       notifications, setNotifications,
       toasts, addToast, removeToast,
       addAuditLog, addNotification, markNotificationRead, markAllNotificationsRead,
+      applyCompanyImport,
+      companyRecords,
     }}>
       {children}
     </AppContext.Provider>

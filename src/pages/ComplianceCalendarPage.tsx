@@ -38,7 +38,8 @@ export default function ComplianceCalendarPage() {
   const calendar = COMPLIANCE_CALENDAR.map(month => month.month === 'Monthly' ? {
     ...month,
     items: [
-      { title: 'Payroll Processing', type: 'PAYROLL', desc: 'Monthly payroll calculation and payment', due: `${ordinal(payPolicy.payDay)} of month` },
+      { title: 'Payroll Processing', type: 'PAYROLL', desc: 'Monthly salary calculation and payment', due: `${ordinal(payPolicy.payDay)} of month` },
+      { title: 'Service charge', type: 'PAYROLL', desc: 'Paid in the middle of the salary pay month, not with salary', due: `${ordinal(payPolicy.serviceChargePayDay)} of month` },
       { title: 'PPh 21 e-Bupot', type: 'PAYROLL', desc: 'Monthly PPh 21 withholding report via e-Bupot/Coretax', due: `${ordinal(payPolicy.pphDueDay)} of month` },
       { title: 'BPJS Contribution', type: 'COMPLIANCE', desc: 'BPJS Kesehatan & Ketenagakerjaan contribution via SIPP', due: `${ordinal(payPolicy.bpjsDueDay)} of month` },
     ],
@@ -69,7 +70,7 @@ export default function ComplianceCalendarPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Compliance Calendar</h1>
-          <p className="text-slate-500 text-sm mt-1">Statutory deadlines follow the pay policy: payroll on day {payPolicy.payDay}, PPh 21 on day {payPolicy.pphDueDay}, BPJS on day {payPolicy.bpjsDueDay}.</p>
+          <p className="text-slate-500 text-sm mt-1">Statutory deadlines follow the pay policy: salary on day {payPolicy.payDay}, service charge on day {payPolicy.serviceChargePayDay}, PPh 21 on day {payPolicy.pphDueDay}, BPJS on day {payPolicy.bpjsDueDay}.</p>
         </div>
       </div>
 

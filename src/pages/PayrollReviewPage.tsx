@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
+import { payrollApi } from '../services/api';
+import BulkUploadButton from '../components/BulkUploadButton';
 
 const formatCurrency = (amount: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
 
@@ -10,10 +12,19 @@ export default function PayrollReviewPage() {
   const [openId, setOpenId] = useState<string | null>(payrollPacks.find(pack => pack.status === 'UNDER_REVIEW')?.id || payrollPacks[0]?.id || null);
   const [note, setNote] = useState('');
   const pack = payrollPacks.find(row => row.id === openId) || null;
-  const canDecide = user?.role === 'GENERAL_MANAGER' || user?.role === 'FINANCIAL_CONTROLLER' || user?.role === 'FINANCE';
+  const embedded = typeof window !== 'undefined' && window.__WOLF_HR_EMBEDDED__ === true;
+  const canDecide = !embedded && (user?.role === 'GENERAL_MANAGER' || user?.role === 'FINANCIAL_CONTROLLER' || user?.role === 'FINANCE');
 
-  const decide = (status: 'APPROVED' | 'RETURNED') => {
+  const decide = async (status: 'APPROVED' | 'RETURNED') => {
     if (!pack) return;
+    if (embedded && status === 'APPROVED') {
+      try {
+        await payrollApi.approve(pack.periodId);
+      } catch {
+        addToast('Payroll approval requires an HRIS payroll grant for this company.', 'error');
+        return;
+      }
+    }
     setPayrollPacks(prev => prev.map(row => row.id === pack.id ? {
       ...row,
       status,
@@ -32,6 +43,7 @@ export default function PayrollReviewPage() {
         <h1 className="text-2xl font-bold text-slate-800">Payroll Review</h1>
         <p className="text-slate-500 text-sm mt-1">A submitted period is frozen here. The numbers stay as they were when payroll sent them.</p>
       </div>
+      <div className="flex justify-end"><BulkUploadButton module="payroll-review" /></div>
       {payrollPacks.length === 0 && (
         <div className="bg-white rounded-xl border border-slate-200 p-8 text-sm text-slate-500">No payroll pack has been submitted.</div>
       )}
@@ -100,7 +112,7 @@ export default function PayrollReviewPage() {
                 </div>
               </div>
             )}
-            {!canDecide && pack.status === 'UNDER_REVIEW' && <p className="text-sm text-slate-500">Waiting for the director or finance to accept or send back this pack.</p>}
+            {!canDecide && pack.status === 'UNDER_REVIEW' && <p className="text-sm text-slate-500">{embedded ? 'Payroll approval requires an HRIS payroll grant for this company. A Wolf role does not approve payroll.' : 'Waiting for the director or finance to accept or send back this pack.'}</p>}
           </div>
         )}
       </div>

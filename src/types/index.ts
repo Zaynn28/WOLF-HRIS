@@ -19,6 +19,15 @@ export interface User {
   avatar?: string;
 }
 
+export interface EmployeeViolation {
+  id: string;
+  date: string;
+  type: string;
+  notes: string;
+  recordedBy: string;
+  recordedAt: string;
+}
+
 export interface Employee {
   id: string;
   employeeCode: string;
@@ -43,7 +52,36 @@ export interface Employee {
   bankAccountName?: string;
   ptkpCode?: string;
   photo?: string;
+  hasProfilePhoto?: boolean;
+  updatedAt?: string;
+  bpjsEnrolled?: boolean;
+  companyCoversEmployeeBpjs?: boolean;
+  taxConfiguration?: 'netto' | 'gross';
+  bpjsTkNumber?: string;
+  bpjsKesehatanNumber?: string;
+  lastEducation?: string;
+  educationInstitution?: string;
+  approvalLine?: string;
+  managerEmployeeId?: string;
+  serviceChargeEligible?: boolean;
+  bpjsKesehatanApplicable?: boolean;
+  bpjsTkApplicable?: boolean;
+  pph21Applicable?: boolean;
+  violations?: EmployeeViolation[];
 }
+
+export type ApplicantStatus =
+  | 'CV_SCREENING'
+  | 'HR_INTERVIEW'
+  | 'USHER_INTERVIEW'
+  | 'OFFER_SENT'
+  | 'OFFER_ACCEPTED'
+  | 'OFFER_REJECTED'
+  | 'APPLIED'
+  | 'REJECTED'
+  | 'OFFERED'
+  | 'SIGNED'
+  | 'ONBOARDED';
 
 export interface Applicant {
   id: string;
@@ -52,20 +90,57 @@ export interface Applicant {
   phone: string;
   departmentId: string;
   positionId: string;
-  status: 'APPLIED' | 'REJECTED' | 'OFFERED' | 'SIGNED' | 'ONBOARDED';
+  status: ApplicantStatus;
   rejectionReason?: string;
+  stageNote?: string;
   basicSalary?: number;
   allowance?: number;
   ptkpCode?: string;
+  bpjsEnrolled?: boolean;
+  companyCoversEmployeeBpjs?: boolean;
+  taxConfiguration?: 'netto' | 'gross';
   bankName?: string;
   bankAccountNumber?: string;
   bankAccountName?: string;
   contractType?: 'PKWTT' | 'PKWT';
   startDate?: string;
   endDate?: string;
+  onboardingDate?: string;
   employeeId?: string;
   loginEmail?: string;
   checks: { ktp: boolean; npwp: boolean; bank: boolean; orientation: boolean };
+  activityChecks?: Record<string, boolean>;
+}
+
+export interface OnboardingMaterial {
+  id: string;
+  title: string;
+  url: string;
+}
+
+export interface OnboardingActivity {
+  id: string;
+  label: string;
+}
+
+export interface OffsiteDuty {
+  id: string;
+  employeeId: string;
+  startDate: string;
+  endDate: string;
+  locationNote: string;
+  status: 'APPROVED' | 'CANCELLED';
+  createdAt: string;
+}
+
+export interface TilLedgerEntry {
+  id: string;
+  employeeId: string;
+  sourceType: 'OVERTIME' | 'REDEMPTION';
+  sourceId: string;
+  minutes: number;
+  note: string;
+  createdAt: string;
 }
 
 export interface EmploymentContract {
@@ -88,6 +163,7 @@ export interface PayPolicy {
   otHolidayEighth: number;
   otHolidayAfter: number;
   serviceChargePercentage: number;
+  serviceChargePayDay: number;
   highSeasonDates: string[];
   bpjsDueDay: number;
   pphDueDay: number;
@@ -163,6 +239,19 @@ export interface Attendance {
   clockOutLng?: number;
   clockInAccuracy?: number;
   clockOutAccuracy?: number;
+  source?: string | null;
+  clockInSiteName?: string | null;
+  clockOutSiteName?: string | null;
+  hasClockInPhoto?: boolean;
+  hasClockOutPhoto?: boolean;
+  offSite?: boolean;
+}
+
+export interface PunchMine {
+  attendanceDate: string;
+  next: 'in' | 'out' | null;
+  blockedReason: string | null;
+  day: Attendance | null;
 }
 
 export interface LeaveType {
@@ -207,6 +296,7 @@ export interface OvertimeRequest {
   approvedAt?: string;
   writtenOrder?: boolean;
   employeeConsent?: boolean;
+  settlement?: 'PAID' | 'TIL';
 }
 
 export interface PayrollPeriod {
@@ -221,6 +311,24 @@ export interface PayrollPeriod {
   finalizedAt?: string;
 }
 
+export interface PayrollStructureComponent {
+  code: string;
+  displayName: string;
+  kind: 'earning' | 'deduction';
+  sortOrder: number;
+  active: boolean;
+  rateBp: number | null;
+  wageBase: string[];
+}
+
+export interface PayrollStructure {
+  effectiveFrom: string | null;
+  grossFormula: string;
+  netFormula: string;
+  source: 'company' | 'period';
+  components: PayrollStructureComponent[];
+}
+
 export interface PayrollRecord {
   id: string;
   payrollPeriodId: string;
@@ -233,6 +341,9 @@ export interface PayrollRecord {
   totalDeductions: number;
   netPay: number;
   status: string;
+  componentAmounts?: Record<string, number>;
+  tariffMissing?: string[];
+  formulaIncomplete?: boolean;
 }
 
 export interface PayrollItem {
@@ -337,6 +448,8 @@ export interface OffboardingCalculation {
   netFinalPay: number;
   status: 'DRAFT' | 'CALCULATED' | 'APPROVED' | 'PAID';
   createdAt: string;
+  activityChecks?: Record<string, boolean>;
+  terRateUsed?: number;
 }
 
 export interface EmployeeLoan {
@@ -443,6 +556,16 @@ export interface AccountingPost {
   journal: string;
 }
 
+export type StaffTaskStatus =
+  | 'OPEN'
+  | 'IN_PROGRESS'
+  | 'DONE'
+  | 'ASSIGNED'
+  | 'ACCEPTED'
+  | 'BLOCKED'
+  | 'IN_REVIEW'
+  | 'COMPLETED';
+
 export interface StaffTask {
   id: string;
   title: string;
@@ -450,9 +573,11 @@ export interface StaffTask {
   assigneeId: string;
   assignerName: string;
   dueDate: string;
-  status: 'OPEN' | 'IN_PROGRESS' | 'DONE';
+  status: StaffTaskStatus;
   createdAt: string;
   completedAt?: string;
+  externalId?: string;
+  employeeCode?: string;
 }
 
 export type AssetCategory = 'LAPTOP' | 'PHONE' | 'UNIFORM' | 'KEYS' | 'OTHER';
@@ -530,4 +655,22 @@ export interface ServiceChargeDistribution {
   distributionBasis: string;
   status: 'DRAFT' | 'DISTRIBUTED' | 'PAID';
   distributedAt?: string;
+}
+
+/** Employee-facing service charge slip (separate from monthly payroll). */
+export interface ServiceChargeEmployeeSlip {
+  id: string;
+  year: number;
+  month: number;
+  status: 'DRAFT' | 'PUBLISHED';
+  employeeId: string;
+  employeeCode?: string;
+  fullName?: string;
+  daysPresent: number;
+  gross: number;
+  pph21: number;
+  net: number;
+  valuePerDay: number;
+  payDate: string;
+  eligible: boolean;
 }

@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { payrollMenuChildren } from '../lib/hr-navigation';
 import { 
   LayoutDashboard, Users, Clock, CalendarDays, DollarSign, FileText, 
-  BarChart3, Shield, Settings, ChevronLeft, ChevronRight, 
+  BarChart3, PieChart, Shield, Settings, ChevronLeft, ChevronRight, 
   Building2, LogOut, Menu, UserCircle, ClipboardList, Wallet
 } from 'lucide-react';
 
@@ -19,7 +20,8 @@ interface NavItem {
 }
 
 export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
-  const { user, logout } = useAuth();
+  const { user, logout, wolfGate } = useAuth();
+  const wolfEmbedded = wolfGate !== "off";
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -30,6 +32,8 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       id: 'people', label: 'People', icon: <Users size={20} />,
       children: [
         { id: 'hiring', label: 'Hiring' },
+        { id: 'onboarding', label: 'Onboarding' },
+        { id: 'offboarding', label: 'Offboarding' },
         { id: 'employees', label: 'Employees' },
         { id: 'contracts', label: 'Contracts' },
         { id: 'documents', label: 'Documents' },
@@ -41,12 +45,9 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
     { id: 'overtime', label: 'Overtime', icon: <Clock size={20} /> },
     { 
       id: 'payroll-group', label: 'Payroll', icon: <DollarSign size={20} />,
-      children: [
-        { id: 'payroll', label: 'Payroll' },
-        { id: 'payroll-review', label: 'Payroll Review' },
-        { id: 'service-charge-distribution', label: 'Service Charge' },
-      ]
+      children: payrollMenuChildren,
     },
+    { id: 'service-charge-distribution', label: 'Service charge', icon: <PieChart size={20} /> },
     {
       id: 'finance-group', label: 'Finance', icon: <Wallet size={20} />,
       children: [
@@ -64,6 +65,11 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
 
   const role = user?.role;
   const isManagerRole = !!role && role.includes('MANAGER');
+  const visibleChildren = (item: NavItem) => item.children?.filter((child) => {
+    if ((child as { advanced?: boolean }).advanced) return false;
+    const limited = (child as { roles?: Set<string> }).roles;
+    return !limited || limited.has(role || '');
+  });
   const navItems = allItems.filter(item => {
     if (item.id === 'tasks') {
       if (!role || role === 'EMPLOYEE') return false;
@@ -71,14 +77,14 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       return role === 'HR_ADMIN' || role === 'HR_STAFF' || role === 'SUPER_ADMIN' || isManagerRole || role === 'DEPARTMENT_HEAD' || role === 'SUPERVISOR';
     }
     if (role === 'EMPLOYEE') return item.id === 'employee-self-service';
-    if (role === 'GENERAL_MANAGER' || isManagerRole) return ['payroll-review', 'reports', 'finance-group'].includes(item.id) || item.id === 'payroll-group';
-    if (role === 'FINANCIAL_CONTROLLER' || role === 'FINANCE') return item.id === 'reports' || item.id === 'integration-export' || item.id === 'payroll-group' || item.id === 'finance-group';
-    if (role === 'PAYROLL') return ['payroll-group', 'reports', 'integration-export', 'finance-group'].includes(item.id);
+    if (role === 'GENERAL_MANAGER' || isManagerRole) return ['payroll-review', 'reports', 'finance-group', 'service-charge-distribution'].includes(item.id) || item.id === 'payroll-group';
+    if (role === 'FINANCIAL_CONTROLLER' || role === 'FINANCE') return item.id === 'reports' || item.id === 'integration-export' || item.id === 'payroll-group' || item.id === 'finance-group' || item.id === 'service-charge-distribution';
+    if (role === 'PAYROLL') return ['payroll-group', 'reports', 'integration-export', 'finance-group', 'service-charge-distribution'].includes(item.id);
     return item.id !== 'employee-self-service';
   });
 
   const isActive = (id: string) => currentPage === id;
-  const isParentActive = (item: NavItem) => item.children?.some(c => currentPage === c.id);
+  const isParentActive = (item: NavItem) => visibleChildren(item)?.some(c => currentPage === c.id);
 
   const sidebarContent = (
     <div className={`h-full flex flex-col bg-slate-900 text-white transition-all duration-300 ${collapsed ? 'w-16' : 'w-64'}`}>
@@ -95,14 +101,16 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       </div>
 
       <nav className="flex-1 overflow-y-auto py-3 px-2">
-        {navItems.map(item => (
+        {navItems.map(item => {
+          const children = visibleChildren(item);
+          return (
           <div key={item.id} className="mb-1">
             <button
               type="button"
               data-nav-id={item.id}
               onClick={() => {
-                if (item.children) {
-                  onNavigate(item.children[0].id);
+                if (children && children.length > 0) {
+                  onNavigate(children[0].id);
                 } else {
                   onNavigate(item.id);
                 }
@@ -117,11 +125,13 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
               <span className="flex-shrink-0">{item.icon}</span>
               {!collapsed && <span className="truncate">{item.label}</span>}
             </button>
-            {!collapsed && item.children && (isParentActive(item) || isActive(item.id)) && (
+            {!collapsed && children && (isParentActive(item) || isActive(item.id)) && (
               <div className="ml-8 mt-1 space-y-1">
-                {item.children.map(child => (
+                {children.map(child => (
                   <button
                     key={child.id}
+                    type="button"
+                    data-nav-id={child.id}
                     onClick={() => onNavigate(child.id)}
                     className={`w-full text-left px-3 py-1.5 rounded text-xs transition-colors ${
                       isActive(child.id)
@@ -135,7 +145,8 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
               </div>
             )}
           </div>
-        ))}
+        );
+        })}
       </nav>
 
       <div className="p-3 border-t border-slate-700">
@@ -153,10 +164,10 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
         <button
           onClick={logout}
           className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-          title="Logout"
+          title={wolfEmbedded ? "Menu" : "Logout"}
         >
-          <LogOut size={16} />
-          {!collapsed && <span>Logout</span>}
+          {wolfEmbedded ? <Menu size={16} /> : <LogOut size={16} />}
+          {!collapsed && <span>{wolfEmbedded ? "Menu" : "Logout"}</span>}
         </button>
       </div>
     </div>

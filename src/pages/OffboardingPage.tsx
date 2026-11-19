@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { OffboardingCalculation } from '../types';
-import { UserCircle, AlertTriangle, CheckCircle, FileText, Save, Pin, Loader2 } from 'lucide-react';
+import { lookupTerRate } from '../lib/payrollEngine';
+import { UserCircle, FileText, Loader2 } from 'lucide-react';
 import Modal from '../components/Modal';
 
 const formatCurrency = (amount: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
@@ -13,20 +14,28 @@ const OFFBOARDING_REASONS = [
   { id: 'RETIREMENT', label: 'Retirement' },
   { id: 'DEATH', label: 'Death' },
   { id: 'SEVERE_VIOLATION', label: 'Severe Violation' },
+] as const;
+
+const DEFAULT_OFFBOARDING_ACTIVITIES = [
+  { id: 'exit_interview', label: 'Exit interview done' },
+  { id: 'asset_return', label: 'Company assets returned' },
+  { id: 'access_revoke', label: 'System access revoked' },
+  { id: 'bpjs_notice', label: 'BPJS membership notice prepared' },
+  { id: 'final_pay', label: 'Final pay settlement agreed' },
 ];
 
 export default function OffboardingPage() {
   const {
     offboardingCalculations, setOffboardingCalculations,
-    employees: allEmployees, payrollRecords: allPayrollRecords,
+    employees: allEmployees, setEmployees, payrollRecords: allPayrollRecords,
     employeeLoans: allEmployeeLoans, leaveRequests, leaveTypes,
-    serviceChargeDistributions,
+    serviceChargeDistributions, terTables,
     addToast, addAuditLog, addNotification,
   } = useApp();
   const [showCalcModal, setShowCalcModal] = useState(false);
   const [newCalc, setNewCalc] = useState<{
     employeeId: string;
-    reason: 'RESIGN' | 'CONTRACT_END' | 'TERMINATION' | 'RETIREMENT' | 'DEATH' | 'SEVERE_VIOLATION';
+    reason: typeof OFFBOARDING_REASONS[number]['id'];
     lastWorkingDay: string;
     noticePeriodDays: number;
   }>({
@@ -39,10 +48,7 @@ export default function OffboardingPage() {
   const [showResult, setShowResult] = useState<OffboardingCalculation | null>(null);
 
   const getEmp = (id: string) => allEmployees.find(e => e.id === id);
-  const getPayrollRecord = (empId: string) => allPayrollRecords.find(r => {
-    const emp = getEmp(r.employeeId);
-    return emp && emp.id === empId;
-  });
+  const getPayrollRecord = (empId: string) => allPayrollRecords.find(r => r.employeeId === empId);
   const getLoans = (empId: string) => allEmployeeLoans.filter(l => l.employeeId === empId && l.status === 'ACTIVE');
 
   const calculateOffboarding = () => {
@@ -57,13 +63,21 @@ export default function OffboardingPage() {
       const payroll = getPayrollRecord(newCalc.employeeId);
       const loans = getLoans(newCalc.employeeId);
 
-      if (!emp || !payroll) {
-        addToast('Employee or payroll record not found', 'error');
+      if (!emp) {
+        addToast('Employee not found', 'error');
         setCalculating(false);
         return;
       }
 
-      const monthlyWage = payroll.basicSalary + payroll.allowance;
+      const monthlyWage = payroll
+        ? payroll.basicSalary + payroll.allowance
+        : 0;
+      if (!monthlyWage) {
+        addToast('No payroll wage found for this employee. Record a payroll line first.', 'error');
+        setCalculating(false);
+        return;
+      }
+
       const noticeDays = newCalc.noticePeriodDays;
       const finalSalaryProrata = Math.round((monthlyWage / 30) * noticeDays);
 
@@ -79,7 +93,6 @@ export default function OffboardingPage() {
       const distributed = serviceChargeDistributions.filter(row => row.employeeId === emp.id && row.status === 'DISTRIBUTED');
       const serviceChargeOutstanding = distributed.reduce((sum, row) => sum + row.amount, 0);
 
-      // Severance pay per PP 35/2021 based on reason and service years
       let severancePay = 0;
       let serviceAppreciation = 0;
       let replacementRights = 0;
@@ -91,14 +104,12 @@ export default function OffboardingPage() {
 
       switch (newCalc.reason) {
         case 'RESIGN':
-          // Resign: no severance, but service appreciation if applicable
           serviceAppreciation = serviceYears >= 3 ? Math.round(monthlyWage * 0.5 * Math.floor(serviceYears / 3)) : 0;
           break;
         case 'CONTRACT_END':
-          contractCompensation = Math.round(monthlyWage * 0.5); // PKWT compensation
+          contractCompensation = Math.round(monthlyWage * 0.5);
           break;
         case 'TERMINATION':
-          // PHK efficiency: severance based on service years
           if (serviceYears < 1) severancePay = Math.round(monthlyWage * 1);
           else if (serviceYears < 2) severancePay = Math.round(monthlyWage * 2);
           else if (serviceYears < 3) severancePay = Math.round(monthlyWage * 3);
@@ -107,7 +118,7 @@ export default function OffboardingPage() {
           else if (serviceYears < 6) severancePay = Math.round(monthlyWage * 6);
           else if (serviceYears < 7) severancePay = Math.round(monthlyWage * 7);
           else if (serviceYears < 8) severancePay = Math.round(monthlyWage * 8);
-          else severancePay = Math.round(monthlyWage * 9); // 8+ years
+          else severancePay = Math.round(monthlyWage * 9);
           serviceAppreciation = serviceYears >= 3 ? Math.round(monthlyWage * 0.5 * Math.floor(serviceYears / 3)) : 0;
           replacementRights = serviceYears >= 3 ? Math.round(monthlyWage * Math.floor(serviceYears / 3)) : 0;
           break;
@@ -121,14 +132,16 @@ export default function OffboardingPage() {
           replacementRights = serviceYears >= 3 ? Math.round(monthlyWage * Math.floor(serviceYears / 3)) : 0;
           break;
         case 'SEVERE_VIOLATION':
-          // No severance for severe violation
           break;
       }
 
       const loanDeduction = loans.reduce((sum, l) => sum + l.remainingBalance, 0);
       const totalFinalPay = finalSalaryProrata + unusedLeaveAmount + serviceChargeOutstanding + severancePay + serviceAppreciation + replacementRights + contractCompensation - loanDeduction;
-      const pph21Final = Math.round(totalFinalPay * 0.05); // simplified progressive rate
+      const terRateUsed = lookupTerRate(Math.max(0, totalFinalPay), emp.ptkpCode || 'TK/0', terTables);
+      const pph21Final = Math.round(Math.max(0, totalFinalPay) * terRateUsed / 100);
       const netFinalPay = totalFinalPay - pph21Final;
+
+      const activityChecks = Object.fromEntries(DEFAULT_OFFBOARDING_ACTIVITIES.map(activity => [activity.id, false]));
 
       const calculation: OffboardingCalculation = {
         id: 'off' + Date.now(),
@@ -150,6 +163,8 @@ export default function OffboardingPage() {
         netFinalPay,
         status: 'CALCULATED',
         createdAt: new Date().toISOString(),
+        activityChecks,
+        terRateUsed,
       };
 
       setOffboardingCalculations(prev => [...prev, calculation]);
@@ -162,14 +177,46 @@ export default function OffboardingPage() {
     }, 500);
   };
 
+  const toggleActivity = (id: string, activityId: string) => {
+    setOffboardingCalculations(prev => prev.map(row => {
+      if (row.id !== id) return row;
+      const current = row.activityChecks || {};
+      return { ...row, activityChecks: { ...current, [activityId]: !current[activityId] } };
+    }));
+    setShowResult(prev => {
+      if (!prev || prev.id !== id) return prev;
+      const current = prev.activityChecks || {};
+      return { ...prev, activityChecks: { ...current, [activityId]: !current[activityId] } };
+    });
+  };
+
+  const completeOffboarding = (row: OffboardingCalculation) => {
+    const checks = row.activityChecks || {};
+    const done = DEFAULT_OFFBOARDING_ACTIVITIES.every(activity => checks[activity.id]);
+    if (!done) {
+      addToast('Complete every offboarding activity before deactivating the employee.', 'error');
+      return;
+    }
+    const emp = getEmp(row.employeeId);
+    const nextStatus = row.reason === 'RESIGN' ? 'RESIGNED' : 'TERMINATED';
+    setEmployees(prev => prev.map(person => person.id === row.employeeId
+      ? { ...person, employmentStatus: nextStatus, terminationDate: row.lastWorkingDay }
+      : person));
+    setOffboardingCalculations(prev => prev.map(item => item.id === row.id ? { ...item, status: 'PAID' } : item));
+    setShowResult(prev => prev && prev.id === row.id ? { ...prev, status: 'PAID' } : prev);
+    addAuditLog('UPDATE', 'Employee', row.employeeId, `${emp?.fullName} offboarded → ${nextStatus}`);
+    addToast(`${emp?.fullName} is now ${nextStatus}.`, 'success');
+  };
+
   const calculations = offboardingCalculations;
+  const activeEmployees = allEmployees.filter(person => person.employmentStatus === 'ACTIVE' || person.employmentStatus === 'PROBATION' || person.employmentStatus === 'ON_LEAVE');
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Offboarding & Final Pay</h1>
-          <p className="text-slate-500 text-sm mt-1">Final pay uses basic salary plus fixed allowance. Unused annual leave is entitlement minus approved annual leave. UP, UPMK, and UPH stay on the simplified PP 35/2021 table.</p>
+          <p className="text-slate-500 text-sm mt-1">Last working day, activity checklist, TER-based PPh 21, then automatic deactivate.</p>
         </div>
         <button onClick={() => setShowCalcModal(true)} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center gap-2">
           <UserCircle size={16} /> New Offboarding
@@ -180,7 +227,7 @@ export default function OffboardingPage() {
         <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Total Offboardings</p><p className="text-2xl font-bold text-slate-800">{calculations.length}</p></div>
         <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Draft</p><p className="text-2xl font-bold text-slate-600">{calculations.filter(c => c.status === 'DRAFT').length}</p></div>
         <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Calculated</p><p className="text-2xl font-bold text-blue-600">{calculations.filter(c => c.status === 'CALCULATED').length}</p></div>
-        <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Paid</p><p className="text-2xl font-bold text-emerald-600">{calculations.filter(c => c.status === 'PAID').length}</p></div>
+        <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Completed</p><p className="text-2xl font-bold text-emerald-600">{calculations.filter(c => c.status === 'PAID').length}</p></div>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -224,7 +271,7 @@ export default function OffboardingPage() {
                         c.status === 'CALCULATED' ? 'bg-blue-100 text-blue-700' :
                         c.status === 'APPROVED' ? 'bg-amber-100 text-amber-700' :
                         'bg-slate-100 text-slate-600'
-                      }`}>{c.status}</span>
+                      }`}>{c.status === 'PAID' ? 'COMPLETED' : c.status}</span>
                     </td>
                     <td className="px-4 py-3">
                       <button onClick={() => setShowResult(c)} className="text-slate-400 hover:text-slate-600"><FileText size={16} /></button>
@@ -237,19 +284,18 @@ export default function OffboardingPage() {
         </div>
       </div>
 
-      {/* New Offboarding Modal */}
       <Modal isOpen={showCalcModal} onClose={() => setShowCalcModal(false)} title="New Offboarding Calculation">
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Employee *</label>
             <select value={newCalc.employeeId} onChange={e => setNewCalc({...newCalc, employeeId: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
               <option value="">Select Employee</option>
-              {allEmployees.map(e => <option key={e.id} value={e.id}>{e.fullName} ({e.employeeCode})</option>)}
+              {activeEmployees.map(e => <option key={e.id} value={e.id}>{e.fullName} ({e.employeeCode})</option>)}
             </select>
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Reason *</label>
-            <select value={newCalc.reason} onChange={e => setNewCalc({...newCalc, reason: e.target.value as any})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+            <select value={newCalc.reason} onChange={e => setNewCalc({...newCalc, reason: e.target.value as typeof newCalc.reason})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
               {OFFBOARDING_REASONS.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
             </select>
           </div>
@@ -266,13 +312,13 @@ export default function OffboardingPage() {
           <div className="flex justify-end gap-3 pt-2">
             <button onClick={() => setShowCalcModal(false)} className="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
             <button onClick={calculateOffboarding} disabled={calculating} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">
-              {calculating ? <Loader2 size={16} className="mr-2 animate-spin" /> : 'Calculate Final Pay'}
+              {calculating ? <Loader2 size={16} className="mr-2 animate-spin inline" /> : null}
+              Calculate Final Pay
             </button>
           </div>
         </div>
       </Modal>
 
-      {/* Result Modal */}
       <Modal isOpen={!!showResult} onClose={() => setShowResult(null)} title="Offboarding Calculation Result">
         <div className="space-y-4">
           {showResult && (
@@ -292,7 +338,7 @@ export default function OffboardingPage() {
                 </div>
                 <div className="bg-slate-50 p-4 rounded-lg">
                   <p className="text-xs text-slate-500 uppercase">Status</p>
-                  <p className={`text-sm font-bold ${showResult.status === 'CALCULATED' ? 'text-blue-600' : 'text-emerald-600'}`}>{showResult.status}</p>
+                  <p className={`text-sm font-bold ${showResult.status === 'CALCULATED' ? 'text-blue-600' : 'text-emerald-600'}`}>{showResult.status === 'PAID' ? 'COMPLETED' : showResult.status}</p>
                 </div>
               </div>
 
@@ -308,27 +354,34 @@ export default function OffboardingPage() {
                   <div className="flex justify-between"><span className="text-slate-600 text-sm">Contract Compensation (PKWT)</span><span className="text-sm text-slate-800">{formatCurrency(showResult.contractCompensation)}</span></div>
                   <div className="flex justify-between border-t border-slate-200 pt-2"><span className="text-slate-600 text-sm text-red-600">Loan Deductions</span><span className="text-sm text-red-600">-{formatCurrency(showResult.loanDeduction)}</span></div>
                   <div className="flex justify-between border-t border-slate-200 pt-2 font-medium"><span className="text-slate-800">Total Final Pay</span><span className="text-slate-800 font-bold">{formatCurrency(showResult.totalFinalPay)}</span></div>
-                  <div className="flex justify-between border-t border-slate-200 pt-2"><span className="text-slate-600 text-sm text-red-600">PPh 21 Final</span><span className="text-sm text-red-600">-{formatCurrency(showResult.pph21Final)}</span></div>
+                  <div className="flex justify-between border-t border-slate-200 pt-2"><span className="text-slate-600 text-sm text-red-600">PPh 21 Final (TER {showResult.terRateUsed ?? 0}%)</span><span className="text-sm text-red-600">-{formatCurrency(showResult.pph21Final)}</span></div>
                   <div className="flex justify-between border-t border-slate-200 pt-2 text-emerald-700 font-bold"><span>Net Final Pay</span><span>{formatCurrency(showResult.netFinalPay)}</span></div>
                 </div>
               </div>
 
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                <p className="text-xs font-medium text-amber-700 mb-2">Compliance Notes (PP 35/2021)</p>
-                <ul className="text-sm text-amber-700 space-y-1 list-disc pl-4">
-                  <li>PPh 21 on termination pay uses progressive rates</li>
-                  <li>BPJS membership must be terminated</li>
-                  <li>JHT claim available for employee</li>
-                  <li>JKP claim if eligible</li>
-                  <li>Final payment must include service charge outstanding</li>
-                </ul>
-              </div>
+              {showResult.status !== 'PAID' && (
+                <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-2">
+                  <p className="text-xs font-medium text-slate-500 uppercase">Offboarding activities</p>
+                  {DEFAULT_OFFBOARDING_ACTIVITIES.map(activity => (
+                    <label key={activity.id} className="flex items-center gap-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(showResult.activityChecks?.[activity.id])}
+                        onChange={() => toggleActivity(showResult.id, activity.id)}
+                      />
+                      {activity.label}
+                    </label>
+                  ))}
+                </div>
+              )}
 
               <div className="flex justify-end gap-3 pt-4">
                 <button onClick={() => setShowResult(null)} className="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50">Close</button>
-                <button className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center gap-2">
-                  <Pin size={16} /> Generate Settlement Letter
-                </button>
+                {showResult.status !== 'PAID' && (
+                  <button onClick={() => completeOffboarding(showResult)} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">
+                    Complete offboarding · deactivate
+                  </button>
+                )}
               </div>
             </>
           )}

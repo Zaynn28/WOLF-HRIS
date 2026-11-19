@@ -40,7 +40,7 @@ export default function ComplianceConfigurationPage() {
   const [editingRule, setEditingRule] = useState<ComplianceRule | null>(null);
   const [editPTKPData, setEditPTKPData] = useState({ code: '', label: '', annualAmount: '' });
   const [editTERData, setEditTERData] = useState({ ptkpCode: '', min: '', max: '', rate: '' });
-  const [editBPJSData, setEditBPJSData] = useState({ effectiveDate: '', healthEmp: '1', healthCo: '4', healthCap: '12000000', jhtEmp: '2', jhtCo: '3.7', jpEmp: '1', jpCo: '2', jpCap: '5000000', jkk: '0.54', jkm: '0.3' });
+  const [editBPJSData, setEditBPJSData] = useState({ effectiveDate: '', healthEmp: '1', healthCo: '4', healthCap: '12000000', jhtEmp: '2', jhtCo: '3.7', jpEmp: '1', jpCo: '2', jpCap: '5000000', jkk: '', jkm: '0.3' });
   const [editUMKData, setEditUMKData] = useState({ region: '', province: '', umk: '', effectiveDate: '' });
   const [editRuleData, setEditRuleData] = useState({ name: '', category: 'PAYROLL', rule: '' });
 
@@ -69,7 +69,7 @@ export default function ComplianceConfigurationPage() {
       healthEmp: '1', healthCo: '4', healthCap: '12000000',
       jhtEmp: '2', jhtCo: '3.7',
       jpEmp: '1', jpCo: '2', jpCap: '5000000',
-      jkk: '0.54', jkm: '0.3',
+      jkk: '', jkm: '0.3',
     });
     else if (type === 'umk') setFormData({ region: '', province: '', umk: '', effectiveDate: today });
     else setFormData({ name: '', category: 'PAYROLL', rule: '' });
@@ -164,7 +164,7 @@ export default function ComplianceConfigurationPage() {
         jpEmployeePercent: parseFloat(formData.jpEmp) || 1,
         jpEmployerPercent: parseFloat(formData.jpCo) || 2,
         jpSalaryCap: parseFloat(formData.jpCap) || 5000000,
-        jkkPercent: parseFloat(formData.jkk) || 0.54,
+        jkkPercent: formData.jkk === '' || formData.jkk == null ? 0 : (parseFloat(formData.jkk) || 0),
         jkmPercent: parseFloat(formData.jkm) || 0.3,
         createdAt: new Date().toISOString(),
       };
@@ -249,7 +249,7 @@ export default function ComplianceConfigurationPage() {
       jpEmployeePercent: parseFloat(editBPJSData.jpEmp) || 1,
       jpEmployerPercent: parseFloat(editBPJSData.jpCo) || 2,
       jpSalaryCap: parseFloat(editBPJSData.jpCap) || 5000000,
-      jkkPercent: parseFloat(editBPJSData.jkk) || 0.54,
+      jkkPercent: editBPJSData.jkk === '' || editBPJSData.jkk == null ? 0 : (parseFloat(editBPJSData.jkk) || 0),
       jkmPercent: parseFloat(editBPJSData.jkm) || 0.3,
     } : b));
     addAuditLog('UPDATE', 'BPJSRates', editingBPJS.id, `BPJS rates updated`);
@@ -601,7 +601,8 @@ export default function ComplianceConfigurationPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">JKK %</label>
-                  <input type="number" step="0.01" value={formData.jkk || 0.54} onChange={e => setFormData(prev => ({ ...prev, jkk: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                  <input type="number" step="0.01" value={formData.jkk ?? ''} placeholder="Not set" onChange={e => setFormData(prev => ({ ...prev, jkk: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                  <p className="text-xs text-slate-500 mt-1">Leave blank until the hotel BPJS TK risk class is confirmed. Payroll warns if JKK is unset.</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">JKM %</label>

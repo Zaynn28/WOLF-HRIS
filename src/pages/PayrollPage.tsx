@@ -1,23 +1,25 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
-import { calculateOvertimePay, calculatePeriodPay, overlapDays, unpaidLeaveDeduction } from '../lib/payrollEngine';
-import { FileText, ChevronDown, ChevronUp, Lock, CheckCircle, AlertTriangle, Calculator, Download } from 'lucide-react';
+import { FileText, Lock, AlertTriangle, Calculator, Download } from 'lucide-react';
 import Modal from '../components/Modal';
 import PeriodBar from '../components/PeriodBar';
 import { downloadPayrollExport, PayrollExportFormat } from '../lib/payrollExport';
+import { payrollConfigurationVisible } from '../lib/hr-navigation';
+import { defaultPayrollStructure, payrollProcessingSummary } from '../lib/payrollStructureView';
+import { mapPayrollRecord, mapPayrollStructure, payrollApi, payrollRunsApi } from '../services/api';
+import type { PayrollRecord, PayrollStructure } from '../types';
+import BulkUploadButton from '../components/BulkUploadButton';
+import { generateDemoPayroll } from '../lib/payrollDemoCycle';
 
-const formatCurrency = (amount: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
+const formatCurrency = (amount: number) => new Intl.NumberFormat('id-ID', {
+  style: 'currency',
+  currency: 'IDR',
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0,
+}).format(amount);
 
-interface PayrollItemView {
-  id: string;
-  componentCode: string;
-  componentName: string;
-  category: 'EARNING' | 'DEDUCTION';
-  amount: number;
-}
-
-export default function PayrollPage() {
+export default function PayrollPage({ onConfigure, mode = "run" }: { onConfigure?: () => void; mode?: "run" | "tax" }) {
   const {
     payrollPeriods,
     setPayrollPeriods,
@@ -25,14 +27,13 @@ export default function PayrollPage() {
     setPayrollRecords,
     payrollItems,
     setPayrollItems,
-    serviceChargeDistributions,
     employees,
-    contracts,
     departments,
     leaveRequests,
     leaveTypes,
     overtimeRequests,
-    payPolicy,
+    attendance,
+    employeeLoans,
     bpjsRates,
     terTables,
     workingPeriodId,
@@ -42,150 +43,132 @@ export default function PayrollPage() {
     setPayrollPacks,
   } = useApp();
   const { user } = useAuth();
-  const [expandedRecord, setExpandedRecord] = useState<string | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState<'review' | 'finalize' | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
   const [exportFormat, setExportFormat] = useState<PayrollExportFormat>('csv');
+  const [structure, setStructure] = useState<PayrollStructure>(defaultPayrollStructure);
+  const [structureSource, setStructureSource] = useState<'loading' | 'company' | 'period' | 'unavailable'>('loading');
 
   useEffect(() => {
-    setExpandedRecord(null);
+    let cancelled = false;
+    const periodId = /^[0-9a-f-]{36}$/i.test(workingPeriodId) ? workingPeriodId : undefined;
+    payrollApi.getStructure(periodId)
+      .then((row) => {
+        const mapped = mapPayrollStructure(row);
+        if (cancelled || !mapped) return;
+        setStructure(mapped);
+        setStructureSource(mapped.source);
+      })
+      .catch(() => {
+        if (!cancelled) setStructureSource('unavailable');
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [workingPeriodId]);
 
   const period = payrollPeriods.find(p => p.id === workingPeriodId);
   const records = payrollRecords.filter(r => r.payrollPeriodId === workingPeriodId);
-  const periodItems = payrollItems.filter(i => records.some(r => r.id === i.payrollRecordId));
 
-  // Recalculate totals from components so numbers always add up
-  const totalBasic = records.reduce((sum, r) => sum + r.basicSalary, 0);
-  const totalAllowance = records.reduce((sum, r) => sum + r.allowance, 0);
-  const totalOvertime = records.reduce((sum, r) => sum + r.overtime, 0);
-  const totalServiceCharge = records.reduce((sum, r) => sum + r.serviceCharge, 0);
-  const totalGross = records.reduce((sum, r) => sum + r.grossPay, 0);
-  const totalDeductions = records.reduce((sum, r) => sum + r.totalDeductions, 0);
-  const totalNet = records.reduce((sum, r) => sum + r.netPay, 0);
-
-  // Verify numbers add up: gross = basic + allowance + overtime + serviceCharge
-  const calculatedGross = totalBasic + totalAllowance + totalOvertime + totalServiceCharge;
-  const numbersMatch = Math.abs(calculatedGross - totalGross) < 0.01;
+  const summaries = records.map((record) => {
+    const withheld = record.componentAmounts?.pph21;
+    const stored = payrollItems.find((item) => item.payrollRecordId === record.id && item.componentCode === 'PPh21');
+    const benefit = typeof withheld === 'number' && withheld > 0 ? 0 : (stored?.amount ?? 0);
+    return payrollProcessingSummary(record, benefit);
+  });
+  const totalBasic = summaries.reduce((sum, row) => sum + row.basic, 0);
+  const totalAllowance = summaries.reduce((sum, row) => sum + row.allowance, 0);
+  const totalAdditional = summaries.reduce((sum, row) => sum + row.additional, 0);
+  const totalDeduction = summaries.reduce((sum, row) => sum + row.deduction, 0);
+  const totalBenefit = summaries.reduce((sum, row) => sum + row.benefit, 0);
+  const totalNet = summaries.reduce((sum, row) => sum + row.total, 0);
+  const totalGross = records.reduce((sum, record) => sum + record.grossPay, 0);
+  const calculatedGross = records.reduce((sum, record) => sum + record.basicSalary + record.allowance + record.overtime, 0);
+  const numbersMatch = structure.grossFormula !== 'basic + allowance + overtime' || Math.abs(calculatedGross - totalGross) < 0.01;
 
   const getEmp = (id: string) => employees.find(e => e.id === id);
   const getDept = (id: string) => departments.find(d => d.id === id)?.name || '-';
 
-  const getRecordItems = (recordId: string): PayrollItemView[] => {
-    return periodItems.filter(i => i.payrollRecordId === recordId);
-  };
+  const runLocalDemoGenerate = (target: NonNullable<typeof period>, apiNote?: string) => {
+    const { records: calculated, items: newItems, warnings } = generateDemoPayroll({
+      period: target,
+      employees,
+      attendance,
+      leaveRequests,
+      leaveTypes,
+      overtimeRequests,
+      loans: employeeLoans,
+      bpjsRates,
+      terTables,
+    });
+    if (warnings.length) addToast(warnings.slice(0, 3).join(' '), 'info');
 
-  const recordHasServiceChargeDist = (recordId: string) => {
-    return serviceChargeDistributions.some(d => d.payrollRecordId === recordId && d.status === 'DISTRIBUTED');
-  };
+    setPayrollItems((prev) => [
+      ...prev.filter((item) => !calculated.some((record) => record.id === item.payrollRecordId)),
+      ...newItems,
+    ]);
+    setPayrollRecords((prev) => [
+      ...prev.filter((row) => row.payrollPeriodId !== target.id),
+      ...calculated,
+    ]);
+    if (target.status === 'DRAFT') {
+      setPayrollPeriods((prev) => prev.map((row) => (row.id === target.id ? { ...row, status: 'CALCULATED' as const } : row)));
+    }
 
-  const serviceChargeDistCount = serviceChargeDistributions.filter(d => d.periodId === workingPeriodId && d.status === 'DISTRIBUTED').length;
+    const gross = calculated.reduce((sum, record) => sum + record.grossPay, 0);
+    addAuditLog('CALCULATE', 'PayrollPeriod', workingPeriodId || '', `Payroll ${target.periodCode} demo generate. Gross: ${formatCurrency(gross)}`);
+    addNotification('GENERAL', 'Payroll Calculated', `Payroll ${target.periodCode} calculated. Total gross: ${formatCurrency(gross)}`);
+    addToast(
+      apiNote
+        ? `${apiNote} — local demo: ${calculated.length} lines · gross ${formatCurrency(gross)}`
+        : `Payroll ${target.periodCode}: ${calculated.length} lines · gross ${formatCurrency(gross)} (local demo)`,
+      'success',
+    );
+  };
 
   const handleCalculate = () => {
     if (!period) return;
+    if (typeof window !== 'undefined' && window.__WOLF_HR_EMBEDDED__) {
+      setIsCalculating(true);
+      const periodCode = period.periodCode || period.startDate?.slice(0, 7);
+      payrollRunsApi.generate(periodCode, {
+        ter_brackets: terTables.map((row) => ({
+          ptkp_code: row.ptkpCode,
+          monthly_gross_min: row.monthlyGrossMin,
+          monthly_gross_max: row.monthlyGrossMax,
+          ter_rate: row.terRate,
+        })),
+      }).then(async (generated) => {
+        const warnings = Array.isArray(generated.warnings) ? generated.warnings : [];
+        if (warnings.length) addToast(warnings.join(' '), 'info');
+        try {
+          const rows = await payrollApi.getRecords(period.id);
+          const lines = rows.map(mapPayrollRecord).filter((row): row is PayrollRecord => row !== null);
+          if (lines.length) {
+            setPayrollRecords((prev) => [...prev.filter((row) => row.payrollPeriodId !== period.id), ...lines]);
+          } else {
+            runLocalDemoGenerate(period, 'No API payroll lines');
+            return;
+          }
+        } catch {
+          runLocalDemoGenerate(period, 'Payroll records API unavailable');
+          return;
+        }
+        if (period.status === 'DRAFT') {
+          setPayrollPeriods((prev) => prev.map((row) => (row.id === period.id ? { ...row, status: 'CALCULATED' as const } : row)));
+        }
+        addToast(`Generated payroll ${periodCode} (version ${generated.version}). Regenerate anytime.`, 'success');
+        addAuditLog('CREATE', 'PayrollRun', periodCode, `Generated version ${generated.version}`);
+      }).catch((error: unknown) => {
+        runLocalDemoGenerate(period, error instanceof Error ? error.message : 'Payroll API unavailable');
+      }).finally(() => setIsCalculating(false));
+      return;
+    }
     setIsCalculating(true);
-
     setTimeout(() => {
-      const rates = [...bpjsRates].sort((a, b) => b.effectiveDate.localeCompare(a.effectiveDate))[0];
-      const periodDistributions = serviceChargeDistributions.filter(row => row.periodId === workingPeriodId && row.status === 'DISTRIBUTED');
-      const source = records.length > 0 ? records : employees
-        .filter(employee => employee.employmentStatus !== 'TERMINATED')
-        .map(employee => {
-          const prior = payrollRecords
-            .filter(row => row.employeeId === employee.id)
-            .sort((a, b) => (payrollPeriods.find(item => item.id === b.payrollPeriodId)?.startDate || '').localeCompare(payrollPeriods.find(item => item.id === a.payrollPeriodId)?.startDate || ''))[0];
-          const contract = contracts.find(row => row.employeeId === employee.id && row.status === 'active');
-          return {
-            id: `pr_${period.id}_${employee.employeeCode}`,
-            payrollPeriodId: period.id,
-            employeeId: employee.id,
-            basicSalary: prior?.basicSalary || contract?.basicSalary || 0,
-            allowance: prior?.allowance || contract?.allowance || 0,
-            overtime: 0,
-            serviceCharge: 0,
-            grossPay: 0,
-            totalDeductions: 0,
-            netPay: 0,
-            status: 'DRAFT',
-          };
-        });
-      const updatedRecords = source.map(record => {
-        const employee = getEmp(record.employeeId);
-        const monthlyWage = record.basicSalary + record.allowance;
-        const overtime = overtimeRequests
-          .filter(request => request.employeeId === record.employeeId && request.status === 'APPROVED' && request.date >= period.startDate && request.date <= period.endDate)
-          .reduce((sum, request) => sum + calculateOvertimePay(monthlyWage, request.totalMinutes, payPolicy.highSeasonDates.includes(request.date), payPolicy).overtimePay, 0);
-        const unpaidDays = leaveRequests
-          .filter(request => request.employeeId === record.employeeId && request.status === 'APPROVED')
-          .reduce((sum, request) => {
-            const leaveType = leaveTypes.find(type => type.id === request.leaveTypeId);
-            if (!leaveType || leaveType.isPaid) return sum;
-            return sum + overlapDays(request.startDate, request.endDate, period.startDate, period.endDate);
-          }, 0);
-        const serviceCharge = periodDistributions
-          .filter(row => row.payrollRecordId === record.id || row.employeeId === record.employeeId)
-          .reduce((sum, row) => sum + row.amount, 0);
-        const result = calculatePeriodPay({
-          basicSalary: record.basicSalary,
-          allowance: record.allowance,
-          overtime,
-          serviceCharge,
-          unpaidLeaveDeduction: unpaidLeaveDeduction(monthlyWage, unpaidDays),
-          ptkpCode: employee?.ptkpCode || 'TK/0',
-          rates,
-          terTables,
-        });
-        return { ...record, ...result, status: 'CALCULATED' as const };
-      });
-
-      const newItems: typeof payrollItems = [];
-      updatedRecords.forEach(record => {
-        const lines: Array<[string, string, 'EARNING' | 'DEDUCTION', number]> = [
-          ['BASIC', 'Basic Salary', 'EARNING', record.basicSalary],
-          ['ALLOW', 'Allowance', 'EARNING', record.allowance],
-          ['OTIME', 'Overtime Pay', 'EARNING', record.overtime],
-          ['SERVCHG', 'Service Charge', 'EARNING', record.serviceCharge],
-          ['UNPAID', 'Unpaid Leave', 'DEDUCTION', record.unpaidLeaveDeduction || 0],
-          ['BPJS_KES', 'BPJS Kesehatan (employee)', 'DEDUCTION', record.bpjsHealth || 0],
-          ['BPJS_JHT', 'BPJS JHT (employee)', 'DEDUCTION', record.bpjsJht || 0],
-          ['BPJS_JP', 'BPJS JP (employee)', 'DEDUCTION', record.bpjsJp || 0],
-          ['PPh21', 'PPh 21 Income Tax', 'DEDUCTION', record.pph21 || 0],
-        ];
-        lines.forEach(([code, name, category, amount]) => {
-          if (amount <= 0 && code !== 'BASIC' && code !== 'ALLOW') return;
-          newItems.push({
-            id: `pi_${record.id}_${code}`,
-            payrollRecordId: record.id,
-            componentCode: code,
-            componentName: name,
-            category,
-            quantity: 1,
-            rate: amount,
-            amount,
-            source_type: code.toLowerCase(),
-            source_id: record.employeeId,
-          });
-        });
-      });
-
-      const calculated = updatedRecords.map(({ unpaidLeaveDeduction: _unpaid, bpjsHealth: _health, bpjsJht: _jht, bpjsJp: _jp, bpjsEmployee: _emp, bpjsEmployerHealth: _eh, bpjsEmployerJht: _ej, bpjsEmployerJp: _ep, pph21: _tax, terRate: _rate, ...record }) => record);
-      setPayrollItems(prev => [
-        ...prev.filter(item => !source.some(record => record.id === item.payrollRecordId)),
-        ...newItems,
-      ]);
-      setPayrollRecords(prev => records.length > 0
-        ? prev.map(record => calculated.find(updated => updated.id === record.id) || record)
-        : [...prev, ...calculated]);
-      if (period.status === 'DRAFT') {
-        setPayrollPeriods(prev => prev.map(row => row.id === period.id ? { ...row, status: 'CALCULATED' as const } : row));
-      }
-
-      const gross = calculated.reduce((sum, record) => sum + record.grossPay, 0);
-      addAuditLog('CALCULATE', 'PayrollPeriod', workingPeriodId || '', `Payroll ${period.periodCode} calculated from attendance inputs. Gross: ${formatCurrency(gross)}`);
-      addNotification('GENERAL', 'Payroll Calculated', `Payroll ${period.periodCode} calculated. Total gross: ${formatCurrency(gross)}`);
-      addToast(`Payroll ${period.periodCode} calculated from approved overtime, unpaid leave, service charge, BPJS, and TER`, 'success');
+      runLocalDemoGenerate(period);
       setIsCalculating(false);
-    }, 600);
+    }, 400);
   };
 
   const handleSubmitForReview = () => {
@@ -217,7 +200,7 @@ export default function PayrollPage() {
       submittedBy: user?.fullName || 'Payroll',
       lines,
       totalGross,
-      totalDeductions,
+      totalDeductions: totalDeduction,
       totalNet,
     }, ...prev.filter(pack => pack.periodId !== period.id || pack.status === 'RETURNED')]);
     setPayrollPeriods(prev => prev.map(p => p.id === workingPeriodId ? { ...p, status: 'UNDER_REVIEW' as const } : p));
@@ -227,7 +210,16 @@ export default function PayrollPage() {
     setShowConfirmModal(null);
   };
 
-  const handleFinalize = () => {
+  const handleFinalize = async () => {
+    if (typeof window !== 'undefined' && window.__WOLF_HR_EMBEDDED__) {
+      try {
+        await payrollApi.approve(workingPeriodId);
+      } catch {
+        addToast('Payroll approval requires an HRIS payroll grant for this company.', 'error');
+        setShowConfirmModal(null);
+        return;
+      }
+    }
     setPayrollPeriods(prev => prev.map(p => p.id === workingPeriodId ? { ...p, status: 'FINALIZED' as const, finalizedAt: new Date().toISOString() } : p));
     addAuditLog('FINALIZE', 'PayrollPeriod', workingPeriodId || '', `Payroll ${period?.periodCode} finalized`);
     addNotification('PAYROLL_FINALIZED', 'Payroll Finalized', `Payroll ${period?.periodCode} has been finalized and locked`);
@@ -264,17 +256,62 @@ export default function PayrollPage() {
     addToast(`Downloaded ${filename}. Finalizing is not required.`, 'success');
   };
 
+  if (mode === "tax") {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800">Tax simulation</h1>
+          <p className="text-slate-500 text-sm mt-1">PPh 21 benefit already stored for this period. It is not edited here and it is not taken off take-home pay on this screen.</p>
+        </div>
+        <PeriodBar />
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <table className="w-full">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr>
+                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">Employee</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">PPh 21 benefit</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {records.length === 0 && (
+                <tr><td colSpan={2} className="px-4 py-8 text-sm text-slate-500">No payroll lines for this period.</td></tr>
+              )}
+              {records.map((record) => {
+                const benefit = payrollItems.find((item) => item.payrollRecordId === record.id && item.componentCode === "PPh21");
+                const person = getEmp(record.employeeId);
+                return (
+                  <tr key={record.id}>
+                    <td className="px-4 py-3 text-sm text-slate-800">{person?.fullName || record.employeeId}</td>
+                    <td className="px-4 py-3 text-sm text-right text-slate-800">{benefit ? formatCurrency(benefit.amount) : "Not calculated"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
   const isFinalized = period?.status === 'FINALIZED' || period?.status === 'LOCKED';
-  const reviewLocked = period?.status === 'UNDER_REVIEW' || period?.status === 'APPROVED' || isFinalized;
+  // Spec: generate anytime with version snapshots — review/finalize must not block regenerate.
+  const reviewLocked = false;
+  const reviewInFlight = period?.status === 'UNDER_REVIEW' || period?.status === 'APPROVED' || isFinalized;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Payroll</h1>
-          <p className="text-slate-500 text-sm mt-1">Calculate the working period from overtime, unpaid leave, and service charge inside its dates.</p>
+          <h1 className="text-2xl font-bold text-slate-800">Payroll processing</h1>
+          <p className="text-slate-500 text-sm mt-1">Salary is paid on the payroll date. Service charge is a separate payment in the middle of that pay month.</p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
+          {payrollConfigurationVisible(user?.role) && onConfigure && (
+            <button type="button" onClick={onConfigure} className="px-4 py-2 bg-white border border-indigo-200 text-indigo-700 rounded-lg text-sm font-medium hover:bg-indigo-50">
+              Payroll structure
+            </button>
+          )}
+          <BulkUploadButton module="payroll" />
           {period && (
             <>
               <label className="text-sm text-slate-600" htmlFor="payroll-export-format">Export</label>
@@ -297,17 +334,17 @@ export default function PayrollPage() {
             <button onClick={handleCalculate} disabled={isCalculating} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               isCalculating ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'
             }`}>
-              {isCalculating ? 'Calculating...' : (<><Calculator size={16} className="mr-2" />Calculate Payroll</>)}
+              {isCalculating ? 'Generating…' : (<><Calculator size={16} className="mr-2" />Generate Payroll</>)}
             </button>
           )}
           {period && !isFinalized && period.status === 'CALCULATED' && (
             <button onClick={() => setShowConfirmModal('review')} className="px-4 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-sm font-medium hover:bg-amber-100">
-              Submit for Review
+              Submit for Review (optional)
             </button>
           )}
           {period && period.status === 'APPROVED' && (
-            <button onClick={() => setShowConfirmModal('finalize')} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">
-              Finalize Payroll
+            <button onClick={() => setShowConfirmModal('finalize')} className="px-4 py-2 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50">
+              Mark reviewed
             </button>
           )}
         </div>
@@ -317,7 +354,7 @@ export default function PayrollPage() {
         <div className="bg-red-50 border border-red-200 rounded-xl p-4">
           <AlertTriangle size={20} className="text-red-600 mr-2" />
           <p className="text-sm text-red-800">
-            <strong>Payroll out of balance:</strong> Component total ({formatCurrency(calculatedGross)}) does not match stored gross ({formatCurrency(totalGross)}). Click "Calculate Payroll" to reconcile.
+            <strong>Payroll out of balance:</strong> Component total ({formatCurrency(calculatedGross)}) does not match stored gross ({formatCurrency(totalGross)}). Click Generate Payroll to reconcile.
           </p>
         </div>
       )}
@@ -327,18 +364,19 @@ export default function PayrollPage() {
       {period && (
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
           <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Period</p><p className="text-lg font-bold text-slate-800">{period.periodCode}</p><p className="text-xs text-slate-400">{period.startDate} to {period.endDate}</p></div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Basic Salary</p><p className="text-lg font-bold text-slate-800">{formatCurrency(totalBasic)}</p><p className="text-xs text-slate-400">{records.length} employees</p></div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Allowance + Overtime</p><p className="text-lg font-bold text-slate-800">{formatCurrency(totalAllowance + totalOvertime)}</p><p className="text-xs text-slate-400">Service Charge: {formatCurrency(totalServiceCharge)}</p></div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Total Gross</p><p className="text-lg font-bold text-slate-800">{formatCurrency(totalGross)}</p><p className="text-xs text-slate-400">{numbersMatch ? '✓ Balanced' : '✗ Out of balance'}</p></div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Total Deductions</p><p className="text-lg font-bold text-red-600">{formatCurrency(totalDeductions)}</p><p className="text-xs text-slate-400">BPJS + Tax</p></div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Total Net Pay</p><p className="text-lg font-bold text-emerald-600">{formatCurrency(totalNet)}</p><p className="text-xs text-slate-400">Pay date: {period.payDate}</p></div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Basic salary</p><p className="text-lg font-bold text-slate-800">{formatCurrency(totalBasic)}</p><p className="text-xs text-slate-400">{records.length} employees</p></div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Allowance</p><p className="text-lg font-bold text-slate-800">{formatCurrency(totalAllowance)}</p></div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Additional earnings</p><p className="text-lg font-bold text-slate-800">{formatCurrency(totalAdditional)}</p></div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Deduction</p><p className="text-lg font-bold text-red-600">{formatCurrency(totalDeduction)}</p></div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Benefit</p><p className="text-lg font-bold text-slate-800">{formatCurrency(totalBenefit)}</p></div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4"><p className="text-sm text-slate-500">Total</p><p className="text-lg font-bold text-emerald-600">{formatCurrency(totalNet)}</p><p className="text-xs text-slate-400">Pay date: {period.payDate}</p></div>
         </div>
       )}
 
-      {period?.status === 'UNDER_REVIEW' && (
+      {reviewInFlight && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-          <p className="text-sm font-medium text-amber-800">Sent to Payroll Review</p>
-          <p className="text-sm text-amber-700">The frozen pack is with the director and finance. Calculate stays off until they send it back.</p>
+          <p className="text-sm font-medium text-amber-800">Review pack in flight</p>
+          <p className="text-sm text-amber-700">You can still Generate Payroll anytime; each run keeps a version snapshot.</p>
         </div>
       )}
 
@@ -354,156 +392,72 @@ export default function PayrollPage() {
 
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <FileText size={16} className="text-slate-500" />
-            <h3 className="font-semibold text-slate-800">Payroll Records</h3>
+          <div>
+            <div className="flex items-center gap-2">
+              <FileText size={16} className="text-slate-500" />
+              <h3 className="font-semibold text-slate-800">Payroll Records</h3>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">Summary only. Component amounts are set in Payroll components.</p>
           </div>
           <div className="text-sm text-slate-500">{records.length} records</div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full" data-payroll-structure-source={structureSource} data-payroll-columns="basic,allowance,additional,deduction,benefit,total">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">Employee</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">Department</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Basic</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Basic salary</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Allowance</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Overtime</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Service Charge</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Gross</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Deductions</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Net Pay</th>
-                <th className="px-4 py-3"></th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Additional earnings</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Deduction</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Benefit</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase">Total</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {records.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-sm text-slate-500">
-                    No payroll lines for {period?.periodCode}. {isFinalized
-                      ? 'This period is closed, so the attendance, leave, overtime, and service charge above stay as a record of that date range.'
-                      : 'Calculate payroll to build a line for each employee from their last basic salary and allowance, then apply overtime, unpaid leave, and service charge dated inside this period.'}
+                  <td colSpan={8} className="px-4 py-8 text-sm text-slate-500">
+                    No payroll lines for {period?.periodCode || 'this month'}. {isFinalized
+                      ? 'This period is closed. Attendance, leave, and overtime for these dates stay as recorded. Service charge is paid separately.'
+                      : 'Choose the pay month to record each stored gaji pokok as basic salary. Employees without a gaji pokok stay off this payroll.'}
                   </td>
                 </tr>
               )}
-              {records.map(record => {
+              {records.map((record, index) => {
                 const emp = getEmp(record.employeeId);
-                const isExpanded = expandedRecord === record.id;
-                const items = getRecordItems(record.id);
-                const earnings = items.filter(i => i.category === 'EARNING');
-                const deductions = items.filter(i => i.category === 'DEDUCTION');
-                const servDist = recordHasServiceChargeDist(record.id);
+                const summary = summaries[index];
                 return (
-                  <>
-                    <tr key={record.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 bg-indigo-100 rounded-full flex items-center justify-center text-xs font-bold text-indigo-600">{emp?.fullName.charAt(0)}</div>
-                          <div>
-                            <p className="text-sm font-medium text-slate-800">{emp?.fullName}</p>
-                            <p className="text-xs text-slate-500">{emp?.employeeCode}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-slate-600">{emp ? getDept(emp.departmentId) : '-'}</td>
-                      <td className="px-4 py-3 text-sm text-right text-slate-600">{formatCurrency(record.basicSalary)}</td>
-                      <td className="px-4 py-3 text-sm text-right text-slate-600">{formatCurrency(record.allowance)}</td>
-                      <td className="px-4 py-3 text-sm text-right text-slate-600">{formatCurrency(record.overtime)}</td>
-                      <td className={`px-4 py-3 text-sm text-right text-slate-600 font-medium ${servDist ? 'text-indigo-600' : ''}`}>{formatCurrency(record.serviceCharge)}{servDist ? ' *' : ''}</td>
-                      <td className="px-4 py-3 text-sm text-right text-slate-800 font-medium">{formatCurrency(record.grossPay)}</td>
-                      <td className="px-4 py-3 text-sm text-right text-red-600">{formatCurrency(record.totalDeductions)}</td>
-                      <td className="px-4 py-3 text-sm text-right text-emerald-700 font-medium">{formatCurrency(record.netPay)}</td>
-                      <td className="px-4 py-3"><button onClick={() => setExpandedRecord(isExpanded ? null : record.id)} className="text-slate-400 hover:text-slate-600">{isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button></td>
-                    </tr>
-                    {isExpanded && (
-                      <tr key={`${record.id}-detail`} className="bg-slate-50">
-                        <td colSpan={10} className="px-4 py-4">
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                            <div>
-                              <p className="text-slate-500 text-xs mb-1">EARNINGS</p>
-                              <div className="space-y-1">
-                                {earnings.map(item => (
-                                  <div key={item.id} className="flex justify-between">
-                                    <span className="text-slate-600">{item.componentName}</span>
-                                    <span className="text-slate-800 font-medium">{formatCurrency(item.amount)}</span>
-                                  </div>
-                                ))}
-                                {servDist && (
-                                  <div className="flex justify-between text-xs text-indigo-600 pt-1 border-t border-indigo-100">
-                                    <span className="text-slate-600">Service Charge (distributed)</span>
-                                    <span className="text-indigo-600 font-medium">+ included above</span>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                            <div>
-                              <p className="text-slate-500 text-xs mb-1">DEDUCTIONS</p>
-                              <div className="space-y-1">
-                                {deductions.map(item => (
-                                  <div key={item.id} className="flex justify-between">
-                                    <span className="text-slate-600">{item.componentName}</span>
-                                    <span className="text-red-600 font-medium">-{formatCurrency(item.amount)}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                            <div>
-                              <p className="text-slate-500 text-xs mb-1">VERIFICATION</p>
-                              <div className="space-y-1">
-                                <div className="flex justify-between">
-                                  <span className="text-slate-600">Components Sum</span>
-                                  <span className="text-slate-800 font-medium">{formatCurrency(record.basicSalary + record.allowance + record.overtime + record.serviceCharge)}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-slate-600">Stored Gross</span>
-                                  <span className={`text-slate-800 font-medium ${record.grossPay === record.basicSalary + record.allowance + record.overtime + record.serviceCharge ? 'text-emerald-600' : 'text-red-600'}`}>
-                                    {formatCurrency(record.grossPay)}
-                                  </span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-slate-600">Net = Gross - Deduct.</span>
-                                  <span className={`text-slate-800 font-medium ${record.netPay === record.grossPay - record.totalDeductions ? 'text-emerald-600' : 'text-red-600'}`}>
-                                    {formatCurrency(record.netPay)}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                            <div>
-                              <p className="text-slate-500 text-xs mb-1">SUMMARY</p>
-                              <div className="space-y-1">
-                                <div className="flex justify-between font-medium"><span>Gross</span><span>{formatCurrency(record.grossPay)}</span></div>
-                                <div className="flex justify-between font-medium"><span>Deductions</span><span className="text-red-600">-{formatCurrency(record.totalDeductions)}</span></div>
-                                <div className="flex justify-between font-bold text-emerald-700 border-t pt-1"><span>Net Pay</span><span>{formatCurrency(record.netPay)}</span></div>
-                              </div>
-                            </div>
-                          </div>
-                          {servDist && (
-                            <div className="mt-3 p-3 bg-indigo-50 rounded-lg border border-indigo-200">
-                              <p className="text-xs text-indigo-700 mb-1">
-                                <CheckCircle size={12} className="mr-1 text-indigo-600" />
-                                Service charge has been distributed to this employee via Service Charge Distribution. The distributed amount is included in Service Charge earnings above.
-                              </p>
-                            </div>
+                  <tr key={record.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 bg-indigo-100 rounded-full flex items-center justify-center text-xs font-bold text-indigo-600">{emp?.fullName.charAt(0)}</div>
+                        <div>
+                          <p className="text-sm font-medium text-slate-800">{emp?.fullName}</p>
+                          <p className="text-xs text-slate-500">{emp?.employeeCode}</p>
+                          {record.tariffMissing && record.tariffMissing.length > 0 && (
+                            <p className="text-xs font-medium text-amber-700">
+                              Tariff not set: {record.tariffMissing.map((code) => structure.components.find((component) => component.code === code)?.displayName || code).join(', ')}
+                            </p>
                           )}
-                        </td>
-                      </tr>
-                    )}
-                  </>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-slate-600">{emp ? getDept(emp.departmentId) : '-'}</td>
+                    <td className="px-4 py-3 text-sm text-right text-slate-800">{formatCurrency(summary.basic)}</td>
+                    <td className="px-4 py-3 text-sm text-right text-slate-600">{formatCurrency(summary.allowance)}</td>
+                    <td className="px-4 py-3 text-sm text-right text-slate-600">{formatCurrency(summary.additional)}</td>
+                    <td className="px-4 py-3 text-sm text-right text-red-600">{formatCurrency(summary.deduction)}</td>
+                    <td className="px-4 py-3 text-sm text-right text-slate-600">{formatCurrency(summary.benefit)}</td>
+                    <td className="px-4 py-3 text-sm text-right text-emerald-700 font-medium">
+                      {record.formulaIncomplete ? <span className="text-amber-700">Tariff not set</span> : formatCurrency(summary.total)}
+                    </td>
+                  </tr>
                 );
               })}
             </tbody>
           </table>
-        </div>
-        <div className="border-t border-slate-200 bg-slate-50 p-4">
-          <div className="flex justify-between items-center">
-            <div>
-              <p className="text-sm text-slate-500">Service Charge Total</p>
-              <p className="text-sm font-bold text-slate-800">{formatCurrency(totalServiceCharge)}</p>
-            </div>
-            <div className="text-xs text-slate-400">
-              {serviceChargeDistCount > 0 ? `* = ${serviceChargeDistCount} employee(s) received service charge distribution` : ''}
-            </div>
-          </div>
         </div>
       </div>
 

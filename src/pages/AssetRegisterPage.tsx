@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { Package, Search, Plus, ArrowRightLeft } from 'lucide-react';
 import Modal from '../components/Modal';
 import { AssetCategory, CompanyAsset } from '../types';
+import BulkUploadButton from '../components/BulkUploadButton';
 
 const CATEGORIES: { id: AssetCategory; label: string }[] = [
   { id: 'LAPTOP', label: 'Laptop' },
@@ -200,6 +201,8 @@ export default function AssetRegisterPage() {
           <h1 className="text-2xl font-bold text-slate-800">Asset Register</h1>
           <p className="text-slate-500 text-sm mt-1">{companyAssets.length} company assets • {companyAssets.filter(asset => asset.holderId).length} currently with staff</p>
         </div>
+        <div className="flex gap-2">
+        <BulkUploadButton module="assets" />
         <button
           onClick={() => setShowIssue(true)}
           disabled={assignable.length === 0}
@@ -207,6 +210,7 @@ export default function AssetRegisterPage() {
         >
           <Plus size={16} /> Issue asset
         </button>
+        </div>
       </div>
 
       {employees.length === 0 && (

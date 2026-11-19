@@ -19,13 +19,13 @@
       }
       html.light,
       html.light body {
-        background-color: #ffffff !important;
-        color: #000000;
+        background-color: #F5F7F9 !important;
+        color: #172334;
       }
       html.dark,
       html.dark body {
-        background-color: #1a1a1a !important;
-        color: #ffffff;
+        background-color: #182435 !important;
+        color: #FFFFFF;
       }
     </style>
     <script>
@@ -42,6 +42,7 @@
         if (isInIframe) {
           // 监听父窗口主动推送的主题消息
           window.addEventListener("message", function (event) {
+            if (event.origin !== window.location.origin) return;
             if (event.data && typeof event.data.theme === "string") {
               const theme = event.data.theme;
               if (theme === "light" || theme === "dark") {
@@ -81,7 +82,7 @@
                       : ""
                 }
               },
-              "*"
+              window.location.origin
             );
           } catch (e) {
             /* 上报失败不影响页面运行 */

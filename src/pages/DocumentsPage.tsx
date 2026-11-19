@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { FileText, Upload, CheckCircle, AlertCircle, Clock, XCircle } from 'lucide-react';
 import { EmployeeDocument } from '../types';
+import BulkUploadButton from '../components/BulkUploadButton';
+import { documentsApi, employeeDocumentFileUrl, isApiAvailable, mapEmployeeDocument } from '../services/api';
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
@@ -37,6 +39,29 @@ export default function DocumentsPage() {
   const selectedEmployee = employees.find(person => person.id === selectedEmployeeId);
   const activeTypes = documentTypes.filter(type => type.active);
   const employeeDocs = documents.filter(doc => doc.employeeId === selectedEmployeeId);
+  const embedded = typeof window !== 'undefined' && window.__WOLF_HR_EMBEDDED__ === true;
+  const useDocumentsApi = embedded || isApiAvailable();
+
+  useEffect(() => {
+    if (!selectedEmployeeId || !useDocumentsApi) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await documentsApi.listForEmployee(selectedEmployeeId);
+        if (cancelled) return;
+        const mapped = rows.map(mapEmployeeDocument);
+        setDocuments((prev) => [
+          ...mapped,
+          ...prev.filter((doc) => doc.employeeId !== selectedEmployeeId || !mapped.some((row) => row.id === doc.id)),
+        ]);
+      } catch {
+        // Keep any in-session documents when the API is offline.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedEmployeeId, useDocumentsApi, setDocuments]);
 
   const knownNames = new Set(documentTypes.map(type => type.name));
   const extraNames = employeeDocs
@@ -80,20 +105,40 @@ export default function DocumentsPage() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  const handleVerify = (id: string) => {
-    setDocuments(prev => prev.map(doc => doc.id === id ? { ...doc, verificationStatus: 'VERIFIED' as const } : doc));
+  const handleVerify = async (id: string) => {
     const doc = documents.find(row => row.id === id);
     const emp = getEmp(doc?.employeeId || '');
-    addAuditLog('UPDATE', 'Document', id, `${doc?.documentTypeName} verified for ${emp?.fullName}`);
-    addToast(`Document verified for ${emp?.fullName}`, 'success');
+    try {
+      if (useDocumentsApi) {
+        const row = await documentsApi.verify(id, 'VERIFIED');
+        const mapped = mapEmployeeDocument(row);
+        setDocuments(prev => prev.map(item => item.id === id ? mapped : item));
+      } else {
+        setDocuments(prev => prev.map(item => item.id === id ? { ...item, verificationStatus: 'VERIFIED' as const } : item));
+      }
+      addAuditLog('UPDATE', 'Document', id, `${doc?.documentTypeName} verified for ${emp?.fullName}`);
+      addToast(`Document verified for ${emp?.fullName}`, 'success');
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'The document status was not updated.', 'error');
+    }
   };
 
-  const handleRejectDoc = (id: string) => {
-    setDocuments(prev => prev.map(doc => doc.id === id ? { ...doc, verificationStatus: 'REJECTED' as const } : doc));
+  const handleRejectDoc = async (id: string) => {
     const doc = documents.find(row => row.id === id);
     const emp = getEmp(doc?.employeeId || '');
-    addAuditLog('UPDATE', 'Document', id, `${doc?.documentTypeName} rejected for ${emp?.fullName}`);
-    addToast(`Document rejected for ${emp?.fullName}`, 'warning');
+    try {
+      if (useDocumentsApi) {
+        const row = await documentsApi.verify(id, 'REJECTED');
+        const mapped = mapEmployeeDocument(row);
+        setDocuments(prev => prev.map(item => item.id === id ? mapped : item));
+      } else {
+        setDocuments(prev => prev.map(item => item.id === id ? { ...item, verificationStatus: 'REJECTED' as const } : item));
+      }
+      addAuditLog('UPDATE', 'Document', id, `${doc?.documentTypeName} rejected for ${emp?.fullName}`);
+      addToast(`Document rejected for ${emp?.fullName}`, 'warning');
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'The document status was not updated.', 'error');
+    }
   };
 
   const addDocumentType = () => {
@@ -185,7 +230,7 @@ export default function DocumentsPage() {
     setSaveSummary('');
   };
 
-  const saveBatch = () => {
+  const saveBatch = async () => {
     if (!selectedEmployee) {
       addToast('Choose an employee first.', 'error');
       return;
@@ -197,6 +242,33 @@ export default function DocumentsPage() {
     const activeNames = new Set(activeTypes.map(type => type.name));
     if (queue.some(file => !activeNames.has(file.documentTypeName))) {
       addToast('Each file needs an active document type.', 'error');
+      return;
+    }
+    const skipNote = skippedNames.length
+      ? ` ${skippedNames.length} file${skippedNames.length === 1 ? '' : 's'} over 8 MB ${skippedNames.length === 1 ? 'was' : 'were'} not saved: ${skippedNames.join(', ')}.`
+      : '';
+    try {
+      if (useDocumentsApi) {
+        const saved = await documentsApi.uploadForEmployee(
+          selectedEmployee.id,
+          queue.map((file) => ({
+            document_type_name: file.documentTypeName,
+            file_name: file.fileName,
+            file: file.dataUrl,
+          })),
+        );
+        const created = (saved.documents || []).map(mapEmployeeDocument);
+        setDocuments((prev) => [...created, ...prev.filter((doc) => !created.some((row) => row.id === doc.id))]);
+        addAuditLog('UPLOAD', 'Document', created[0]?.id || selectedEmployee.id, `${created.length} files uploaded for ${selectedEmployee.fullName}`);
+        const summary = `Saved ${created.length} file${created.length === 1 ? '' : 's'} for ${selectedEmployee.fullName}.${skipNote}`;
+        setSaveSummary(summary);
+        addToast(summary, 'success');
+        setQueue([]);
+        setSkippedNames([]);
+        return;
+      }
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'The documents were not saved.', 'error');
       return;
     }
     const stamp = Date.now();
@@ -213,9 +285,6 @@ export default function DocumentsPage() {
     }));
     setDocuments(prev => [...prev, ...created]);
     addAuditLog('UPLOAD', 'Document', created[0].id, `${created.length} files uploaded for ${selectedEmployee.fullName}`);
-    const skipNote = skippedNames.length
-      ? ` ${skippedNames.length} file${skippedNames.length === 1 ? '' : 's'} over 8 MB ${skippedNames.length === 1 ? 'was' : 'were'} not saved: ${skippedNames.join(', ')}.`
-      : '';
     const summary = `Saved ${created.length} file${created.length === 1 ? '' : 's'} for ${selectedEmployee.fullName}.${skipNote}`;
     setSaveSummary(summary);
     addToast(summary, 'success');
@@ -223,7 +292,9 @@ export default function DocumentsPage() {
     setSkippedNames([]);
   };
 
-  const renderFile = (doc: EmployeeDocument) => (
+  const renderFile = (doc: EmployeeDocument) => {
+    const href = doc.dataUrl || employeeDocumentFileUrl(doc.id, false);
+    return (
     <div key={doc.id} className="border border-slate-200 rounded-lg p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
@@ -236,8 +307,8 @@ export default function DocumentsPage() {
         <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded font-medium shrink-0 ${statusColor(doc.verificationStatus)}`}>{statusIcon(doc.verificationStatus)}{doc.verificationStatus}</span>
       </div>
       <div className="flex flex-wrap gap-2 mt-3">
-        <button onClick={() => doc.dataUrl && setPreviewUrl(doc.dataUrl)} className="text-xs text-indigo-700">Open file</button>
-        {doc.dataUrl && <a href={doc.dataUrl} download={doc.fileName} className="text-xs text-indigo-700">Download</a>}
+        <button onClick={() => setPreviewUrl(href)} className="text-xs text-indigo-700">Open file</button>
+        <a href={href} target="_blank" rel="noreferrer" className="text-xs text-indigo-700">Download</a>
       </div>
       {doc.verificationStatus === 'PENDING' && (
         <div className="flex gap-2 mt-3 pt-3 border-t border-slate-100">
@@ -246,7 +317,8 @@ export default function DocumentsPage() {
         </div>
       )}
     </div>
-  );
+    );
+  };
 
   return (
     <div className="space-y-6">

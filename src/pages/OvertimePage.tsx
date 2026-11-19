@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { calculateOvertimePay } from '../lib/payrollEngine';
 import { Clock, CheckCircle, AlertCircle, AlertTriangle, FileText } from 'lucide-react';
 import Modal from '../components/Modal';
+import BulkUploadButton from '../components/BulkUploadButton';
 
 const formatCurrency = (amount: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
 
@@ -14,10 +15,16 @@ const localDate = (date: Date) => {
 
 export default function OvertimePage() {
   const {
-    overtimeRequests, setOvertimeRequests, employees: allEmployees, payrollRecords, payPolicy, addToast, addAuditLog, addNotification,
+    overtimeRequests, setOvertimeRequests, employees: allEmployees, payrollRecords, payPolicy,
+    tilLedger, setTilLedger, setLeaveRequests, leaveTypes,
+    addToast, addAuditLog, addNotification,
   } = useApp();
   const [showRequestModal, setShowRequestModal] = useState(false);
-  const [newOT, setNewOT] = useState({ employeeId: '', date: '', startTime: '', endTime: '', reason: '', writtenOrder: false, employeeConsent: false });
+  const [showRedeemModal, setShowRedeemModal] = useState(false);
+  const [redeem, setRedeem] = useState({ employeeId: '', minutes: '60', note: '', kind: 'early_leave' });
+  const [newOT, setNewOT] = useState({ employeeId: '', date: '', startTime: '', endTime: '', reason: '', writtenOrder: false, employeeConsent: false, settlement: 'PAID' as 'PAID' | 'TIL' });
+
+  const tilBalance = (employeeId: string) => tilLedger.filter(row => row.employeeId === employeeId).reduce((sum, row) => sum + row.minutes, 0);
 
   const getEmp = (id: string) => allEmployees.find(e => e.id === id);
 
@@ -45,11 +52,65 @@ export default function OvertimePage() {
   };
 
   const handleApprove = (id: string) => {
-    setOvertimeRequests(prev => prev.map(o => o.id === id ? { ...o, status: 'APPROVED' as const, approvedAt: new Date().toISOString() } : o));
     const ot = overtimeRequests.find(o => o.id === id);
     const emp = getEmp(ot?.employeeId || '');
+    setOvertimeRequests(prev => prev.map(o => o.id === id ? { ...o, status: 'APPROVED' as const, approvedAt: new Date().toISOString() } : o));
+    if (ot && (ot.settlement || 'PAID') === 'TIL') {
+      setTilLedger(prev => [...prev, {
+        id: `til${Date.now()}`,
+        employeeId: ot.employeeId,
+        sourceType: 'OVERTIME',
+        sourceId: ot.id,
+        minutes: ot.totalMinutes,
+        note: `TIL credit from overtime ${ot.date}`,
+        createdAt: new Date().toISOString(),
+      }]);
+      addToast(`Time-in-lieu banked for ${emp?.fullName}: ${(ot.totalMinutes / 60).toFixed(1)}h`, 'success');
+    } else {
+      addToast(`Overtime approved for ${emp?.fullName}`, 'success');
+    }
     addAuditLog('APPROVE', 'OvertimeRequest', id, `Overtime approved for ${emp?.fullName}`);
-    addToast(`Overtime approved for ${emp?.fullName}`, 'success');
+  };
+
+  const redeemTil = () => {
+    const minutes = Number(redeem.minutes);
+    if (!redeem.employeeId || !Number.isFinite(minutes) || minutes <= 0) {
+      addToast('Employee and minutes are required.', 'error');
+      return;
+    }
+    if (tilBalance(redeem.employeeId) < minutes) {
+      addToast('Not enough TIL balance.', 'error');
+      return;
+    }
+    const emp = getEmp(redeem.employeeId);
+    setTilLedger(prev => [...prev, {
+      id: `til${Date.now()}`,
+      employeeId: redeem.employeeId,
+      sourceType: 'REDEMPTION',
+      sourceId: `redeem-${Date.now()}`,
+      minutes: -minutes,
+      note: `${redeem.kind}: ${redeem.note || 'TIL redemption'}`,
+      createdAt: new Date().toISOString(),
+    }]);
+    if (redeem.kind === 'leave_day' && leaveTypes[0]) {
+      const today = localDate(new Date());
+      setLeaveRequests(prev => [...prev, {
+        id: `lv${Date.now()}`,
+        employeeId: redeem.employeeId,
+        leaveTypeId: leaveTypes[0].id,
+        startDate: today,
+        endDate: today,
+        totalDays: Math.max(1, Math.round(minutes / (8 * 60))),
+        reason: `TIL redemption: ${redeem.note || 'leave'}`,
+        status: 'APPROVED',
+        submittedAt: new Date().toISOString(),
+        approvedAt: new Date().toISOString(),
+      }]);
+    }
+    addAuditLog('CREATE', 'TilLedger', redeem.employeeId, `${emp?.fullName} redeemed ${minutes} TIL minutes`);
+    addToast(`TIL redeemed for ${emp?.fullName}.`, 'success');
+    setShowRedeemModal(false);
+    setRedeem({ employeeId: '', minutes: '60', note: '', kind: 'early_leave' });
   };
 
   const handleReject = (id: string) => {
@@ -112,6 +173,7 @@ export default function OvertimePage() {
       requestedBy: newOT.employeeId,
       writtenOrder: newOT.writtenOrder,
       employeeConsent: newOT.employeeConsent,
+      settlement: newOT.settlement,
     };
     setOvertimeRequests(prev => [...prev, request]);
     const emp = getEmp(newOT.employeeId);
@@ -119,7 +181,7 @@ export default function OvertimePage() {
     addNotification('PENDING_APPROVAL', 'New Overtime Request', `${emp?.fullName} has an overtime request for ${newOT.date}`);
     addToast(`Overtime request submitted for ${emp?.fullName}`, 'success');
     setShowRequestModal(false);
-    setNewOT({ employeeId: '', date: '', startTime: '', endTime: '', reason: '', writtenOrder: false, employeeConsent: false });
+    setNewOT({ employeeId: '', date: '', startTime: '', endTime: '', reason: '', writtenOrder: false, employeeConsent: false, settlement: 'PAID' });
   };
 
   const totalApprovedMinutes = overtimeRequests.filter(o => o.status === 'APPROVED').reduce((sum, o) => sum + o.totalMinutes, 0);
@@ -132,9 +194,14 @@ export default function OvertimePage() {
           <h1 className="text-2xl font-bold text-slate-800">Overtime Management</h1>
           <p className="text-slate-500 text-sm mt-1">Overtime tracking with PP 35/2021 compliance (1.5×/2× rates, max 4h/day, 18h/week)</p>
         </div>
-        <button onClick={() => setShowRequestModal(true)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium">
-          <Clock size={16} /> New Request
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowRedeemModal(true)} className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 text-sm font-medium">
+            Redeem TIL
+          </button>
+          <button onClick={() => setShowRequestModal(true)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium">
+            <Clock size={16} /> New Request
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -168,14 +235,18 @@ export default function OvertimePage() {
                       <p className="font-medium text-slate-800">{emp?.fullName}</p>
                       <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded font-medium ${statusColor(ot.status)}`}>{statusIcon(ot.status)}{ot.status}</span>
                     </div>
-                    <p className="text-sm text-slate-500 mt-1">{ot.date} • {ot.startTime} - {ot.endTime} • {ot.totalMinutes} minutes ({(ot.totalMinutes / 60).toFixed(1)}h)</p>
+                    <p className="text-sm text-slate-500 mt-1">{ot.date} • {ot.startTime} - {ot.endTime} • {ot.totalMinutes} minutes ({(ot.totalMinutes / 60).toFixed(1)}h) · {(ot.settlement || 'PAID') === 'TIL' ? 'Time in lieu' : 'Paid'}</p>
                     <p className="text-sm text-slate-600 mt-1">Reason: {ot.reason}</p>
+                    {(ot.settlement || 'PAID') === 'TIL' && ot.status === 'APPROVED' && (
+                      <p className="text-xs text-indigo-700 mt-1">TIL balance for this person: {(tilBalance(ot.employeeId) / 60).toFixed(1)}h</p>
+                    )}
                     <div className="flex items-center gap-2 mt-2 text-xs">
                       {ot.writtenOrder ? <span className="flex items-center gap-1 text-emerald-600"><CheckCircle size={12} className="text-emerald-600" /> Written Order</span> : <span className="flex items-center gap-1 text-red-600"><AlertCircle size={12} className="text-red-600" /> No Written Order</span>}
                       {ot.employeeConsent ? <span className="flex items-center gap-1 text-emerald-600"><CheckCircle size={12} className="text-emerald-600" /> Employee Consent</span> : <span className="flex items-center gap-1 text-red-600"><AlertCircle size={12} className="text-red-600" /> No Consent</span>}
                     </div>
                     <p className="text-xs text-slate-400 mt-1">Submitted by: {getEmp(ot.requestedBy)?.fullName || emp?.fullName}</p>
                     <p className="text-xs text-slate-500 mt-1">{(() => {
+                      if ((ot.settlement || 'PAID') === 'TIL') return 'Settled as time in lieu — no overtime pay.';
                       const estimate = calculateOvertimePay(wageFor(ot.employeeId), ot.totalMinutes, payPolicy.highSeasonDates.includes(ot.date), payPolicy);
                       return `${estimate.breakdown} • ${formatCurrency(estimate.overtimePay)}`;
                     })()}</p>
@@ -221,6 +292,13 @@ export default function OvertimePage() {
             <label className="block text-sm font-medium text-slate-700 mb-1">Reason</label>
             <textarea value={newOT.reason} onChange={e => setNewOT({...newOT, reason: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" rows={3} placeholder="Reason for overtime..." />
           </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Settlement</label>
+            <select value={newOT.settlement} onChange={e => setNewOT({ ...newOT, settlement: e.target.value as 'PAID' | 'TIL' })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+              <option value="PAID">Paid overtime</option>
+              <option value="TIL">Time in lieu (bank hours)</option>
+            </select>
+          </div>
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
             <p className="text-xs font-medium text-slate-700 mb-2">PP 35/2021 Compliance</p>
             <div className="flex items-start gap-2 mb-2">
@@ -235,6 +313,40 @@ export default function OvertimePage() {
           <div className="flex justify-end gap-3 pt-2">
             <button onClick={() => setShowRequestModal(false)} className="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
             <button onClick={handleSubmitOT} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Submit Request</button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={showRedeemModal} onClose={() => setShowRedeemModal(false)} title="Redeem time in lieu">
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Employee *</label>
+            <select value={redeem.employeeId} onChange={e => setRedeem({ ...redeem, employeeId: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+              <option value="">Select Employee</option>
+              {allEmployees.filter(e => e.employmentStatus === 'ACTIVE').map(e => (
+                <option key={e.id} value={e.id}>{e.fullName} · {(tilBalance(e.id) / 60).toFixed(1)}h banked</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Use for</label>
+            <select value={redeem.kind} onChange={e => setRedeem({ ...redeem, kind: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+              <option value="early_leave">Leave early</option>
+              <option value="late_arrival">Arrive late</option>
+              <option value="leave_day">Leave day</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Minutes *</label>
+            <input value={redeem.minutes} onChange={e => setRedeem({ ...redeem, minutes: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Note</label>
+            <input value={redeem.note} onChange={e => setRedeem({ ...redeem, note: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+          </div>
+          <div className="flex justify-end gap-3">
+            <button onClick={() => setShowRedeemModal(false)} className="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-600">Cancel</button>
+            <button onClick={redeemTil} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium">Redeem</button>
           </div>
         </div>
       </Modal>

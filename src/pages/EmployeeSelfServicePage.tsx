@@ -1,11 +1,46 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
-import { User, Calendar, Clock, FileText, DollarSign, Bell, CheckCircle, AlertCircle } from 'lucide-react';
+import { User, Calendar, Clock, FileText, DollarSign, Bell, CheckCircle, AlertCircle, Download, Printer } from 'lucide-react';
 import ClockCapture, { ClockProof } from '../components/ClockCapture';
-import { minutesLate } from '../lib/payrollEngine';
-import { punchRejection } from '../lib/officeLocation';
+import PayslipSheet from '../components/PayslipSheet';
+import ServiceChargeSlip from '../components/ServiceChargeSlip';
+import {
+  attendanceApi,
+  documentsApi,
+  employeeDocumentFileUrl,
+  employeePhotoUrl,
+  isApiAvailable,
+  mapEmployeeDocument,
+  mapPunchMine,
+} from '../services/api';
+import type { Employee, PunchMine } from '../types';
 import { EmployeeDocument, ReimbursementClaim } from '../types';
+import { ProfileEditor } from '../components/ProfileEditor';
+
+const PAYROLL_SLIP_STATUSES = new Set(['CALCULATED', 'UNDER_REVIEW', 'APPROVED', 'FINALIZED', 'LOCKED']);
+
+function resolveEssEmployee(
+  user: { employeeId?: string; email?: string; role?: string } | null | undefined,
+  people: Employee[],
+): Employee | undefined {
+  if (!user) return undefined;
+  if (user.employeeId) {
+    const byId = people.find((person) => person.id === user.employeeId);
+    if (byId) return byId;
+  }
+  if (user.email) {
+    const email = user.email.toLowerCase();
+    const byEmail = people.find((person) => person.email?.toLowerCase() === email);
+    if (byEmail) return byEmail;
+  }
+  // Wolf preview / unlinked employee workspace — bind to first active roster member.
+  if (user.role === 'EMPLOYEE' && /preview@|employee\.preview/i.test(user.email || '')) {
+    return people.find((person) => person.employmentStatus === 'ACTIVE') || people[0];
+  }
+  if (user.role === 'EMPLOYEE' && people.length === 1) return people[0];
+  return undefined;
+}
 
 const MAX_DOCUMENT_BYTES = 8 * 1024 * 1024;
 
@@ -28,63 +63,60 @@ function readStaffFile(file: File): Promise<string> {
 
 export default function EmployeeSelfServicePage() {
   const { user } = useAuth();
-  const { employees, departments, positions, leaveRequests, payrollRecords, payrollItems, leaveTypes, payrollPeriods, attendance, setAttendance, shifts, tasks, setTasks, documents, setDocuments, documentTypes, officeLocation, reimbursements, setReimbursements, employeeLoans, companyAssets, addToast, addAuditLog } = useApp();
+  const { employees, departments, positions, leaveRequests, payrollRecords, payrollItems, leaveTypes, payrollPeriods, attendance, setAttendance, tasks, setTasks, documents, setDocuments, documentTypes, reimbursements, setReimbursements, employeeLoans, companyAssets, terTables, serviceChargeSlips, addToast, addAuditLog } = useApp();
   const [activeTab, setActiveTab] = useState<'overview' | 'leave' | 'attendance' | 'payslips' | 'tasks' | 'documents' | 'reimbursements'>('overview');
   const [openSlip, setOpenSlip] = useState<string | null>(null);
   const [punchMode, setPunchMode] = useState<'in' | 'out' | null>(null);
+  const [mine, setMine] = useState<PunchMine | null | undefined>(undefined);
+  const [mineError, setMineError] = useState('');
   const [claimForm, setClaimForm] = useState({ claimDate: '', category: 'TRANSPORT' as ReimbursementClaim['category'], amount: '', description: '', receiptFileName: '', receiptFileSize: 0, receiptDataUrl: '' });
   const [documentQueue, setDocumentQueue] = useState<QueuedStaffFile[]>([]);
   const [skippedDocumentNames, setSkippedDocumentNames] = useState<string[]>([]);
   const [documentSaveSummary, setDocumentSaveSummary] = useState('');
 
-  const employee = employees.find(person => person.id === user?.employeeId) || employees.find(person => person.email === user?.email);
+  const employee = resolveEssEmployee(user, employees);
   const currentEmployeeId = employee?.id || '';
   const department = employee ? departments.find(d => d.id === employee.departmentId) : null;
   const position = employee ? positions.find(p => p.id === employee.positionId) : null;
 
-  const now = new Date();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const todayRow = attendance.find(row => row.employeeId === currentEmployeeId && row.attendanceDate === today);
+  useEffect(() => {
+    let cancelled = false;
+    attendanceApi.mine().then((row) => {
+      if (!cancelled) setMine(mapPunchMine(row));
+    }).catch((error: unknown) => {
+      if (!cancelled) {
+        setMine(null);
+        setMineError(error instanceof Error ? error.message : 'Punch is not available for this session.');
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const myTasks = tasks.filter(task => task.assigneeId === currentEmployeeId);
   const myDocuments = documents.filter(doc => doc.employeeId === currentEmployeeId);
   const myAssets = companyAssets.filter(asset => asset.holderId === currentEmployeeId);
 
-  const savePunch = (captured: ClockProof) => {
-    if (!employee || !punchMode) return;
-    const rejected = punchRejection(captured.photo, captured.latitude, captured.longitude, officeLocation);
-    if (rejected) {
-      addToast(rejected, 'error');
-      return;
-    }
-    const stamp = new Date();
-    const timeStr = `${String(stamp.getHours()).padStart(2, '0')}:${String(stamp.getMinutes()).padStart(2, '0')}`;
-    const shift = shifts.find(row => row.id === (todayRow?.shiftId || 's4')) || shifts[0];
-    const late = punchMode === 'in' && shift && !shift.crossesMidnight ? minutesLate(timeStr, shift.startTime) : todayRow?.lateMinutes || 0;
-    setAttendance(prev => {
-      const existing = prev.find(row => row.employeeId === employee.id && row.attendanceDate === today);
-      if (!existing) {
-        return [...prev, {
-          id: `att${Date.now()}`,
-          employeeId: employee.id,
-          attendanceDate: today,
-          shiftId: shift?.id || 's4',
-          clockIn: timeStr,
-          status: late > 0 ? 'LATE' as const : 'PRESENT' as const,
-          lateMinutes: late,
-          clockInPhoto: captured.photo,
-          clockInLat: captured.latitude,
-          clockInLng: captured.longitude,
-          clockInAccuracy: captured.accuracy,
-        }];
-      }
-      return prev.map(row => {
-        if (row.id !== existing.id) return row;
-        if (punchMode === 'out') return { ...row, clockOut: timeStr, clockOutPhoto: captured.photo, clockOutLat: captured.latitude, clockOutLng: captured.longitude, clockOutAccuracy: captured.accuracy };
-        return { ...row, clockIn: timeStr, lateMinutes: late, status: late > 0 ? 'LATE' as const : 'PRESENT' as const, clockInPhoto: captured.photo, clockInLat: captured.latitude, clockInLng: captured.longitude, clockInAccuracy: captured.accuracy };
+  const savePunch = async (captured: ClockProof) => {
+    try {
+      const saved = await attendanceApi.punch({
+        photo: captured.photo,
+        latitude: captured.latitude,
+        longitude: captured.longitude,
+        accuracy: captured.accuracy,
+        idempotency_key: crypto.randomUUID(),
       });
-    });
-    addToast(`Clocked ${punchMode === 'in' ? 'in' : 'out'} at ${timeStr}.`, 'success');
-    setPunchMode(null);
+      const fresh = mapPunchMine(await attendanceApi.mine());
+      setMine(fresh);
+      if (fresh.day) {
+        const day = fresh.day;
+        setAttendance((prev) => [...prev.filter((row) => !(row.employeeId === day.employeeId && row.attendanceDate === day.attendanceDate)), day]);
+      }
+      addToast(saved.message || 'Punch recorded.', saved.outcome === 'kept' ? 'warning' : 'success');
+      setPunchMode(null);
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'The punch was not recorded.', 'error');
+    }
   };
 
   const activeDocumentTypes = documentTypes.filter(type => type.active);
@@ -122,7 +154,25 @@ export default function EmployeeSelfServicePage() {
     setDocumentSaveSummary('');
   };
 
-  const saveOwnFiles = () => {
+  useEffect(() => {
+    if (!employee?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await documentsApi.listSelf();
+        if (cancelled) return;
+        const mapped = rows.map(mapEmployeeDocument);
+        setDocuments((prev) => [...mapped, ...prev.filter((doc) => doc.employeeId !== employee.id || !mapped.some((row) => row.id === doc.id))]);
+      } catch {
+        // Keep any in-session documents when the API is offline.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [employee?.id, setDocuments]);
+
+  const saveOwnFiles = async () => {
     if (!employee) {
       addToast('This login is not linked to an employee record.', 'error');
       return;
@@ -134,6 +184,31 @@ export default function EmployeeSelfServicePage() {
     const activeNames = new Set(activeDocumentTypes.map(type => type.name));
     if (documentQueue.some(file => !activeNames.has(file.documentTypeName))) {
       addToast('Each file needs an active document type.', 'error');
+      return;
+    }
+    const skipNote = skippedDocumentNames.length
+      ? ` ${skippedDocumentNames.length} file${skippedDocumentNames.length === 1 ? '' : 's'} over 8 MB ${skippedDocumentNames.length === 1 ? 'was' : 'were'} not saved: ${skippedDocumentNames.join(', ')}.`
+      : '';
+    const embedded = typeof window !== 'undefined' && window.__WOLF_HR_EMBEDDED__ === true;
+    try {
+      if (isApiAvailable() || embedded) {
+        const saved = await documentsApi.uploadSelf(documentQueue.map((file) => ({
+          document_type_name: file.documentTypeName,
+          file_name: file.fileName,
+          file: file.dataUrl,
+        })));
+        const created = (saved.documents || []).map(mapEmployeeDocument);
+        setDocuments((prev) => [...created, ...prev.filter((doc) => !created.some((row) => row.id === doc.id))]);
+        addAuditLog('UPLOAD', 'Document', created[0]?.id || employee.id, `${created.length} files uploaded by ${employee.fullName}`);
+        const summary = `Saved ${created.length} file${created.length === 1 ? '' : 's'} to your documents.${skipNote}`;
+        setDocumentSaveSummary(summary);
+        addToast(summary, 'success');
+        setDocumentQueue([]);
+        setSkippedDocumentNames([]);
+        return;
+      }
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'The documents were not saved.', 'error');
       return;
     }
     const stamp = Date.now();
@@ -150,9 +225,6 @@ export default function EmployeeSelfServicePage() {
     }));
     setDocuments(prev => [...created, ...prev]);
     addAuditLog('UPLOAD', 'Document', created[0].id, `${created.length} files uploaded by ${employee.fullName}`);
-    const skipNote = skippedDocumentNames.length
-      ? ` ${skippedDocumentNames.length} file${skippedDocumentNames.length === 1 ? '' : 's'} over 8 MB ${skippedDocumentNames.length === 1 ? 'was' : 'were'} not saved: ${skippedDocumentNames.join(', ')}.`
-      : '';
     const summary = `Saved ${created.length} file${created.length === 1 ? '' : 's'} to your documents.${skipNote}`;
     setDocumentSaveSummary(summary);
     addToast(summary, 'success');
@@ -206,11 +278,24 @@ export default function EmployeeSelfServicePage() {
 
   const myLeaveRequests = leaveRequests.filter(lr => lr.employeeId === currentEmployeeId);
   const myAttendance = attendance.filter(row => row.employeeId === currentEmployeeId);
-  const myPayrollRecords = payrollRecords.filter(pr => {
-    if (pr.employeeId !== currentEmployeeId) return false;
-    const period = payrollPeriods.find(row => row.id === pr.payrollPeriodId);
-    return period?.status === 'FINALIZED' || period?.status === 'LOCKED';
-  });
+  const myPayrollRecords = currentEmployeeId
+    ? payrollRecords.filter((pr) => {
+        if (pr.employeeId !== currentEmployeeId) return false;
+        const period = payrollPeriods.find((row) => row.id === pr.payrollPeriodId);
+        if (period && PAYROLL_SLIP_STATUSES.has(period.status)) return true;
+        // Show calculated lines even if period status lagged behind.
+        return pr.status === 'CALCULATED' || pr.status === 'FINALIZED' || pr.status === 'APPROVED';
+      })
+    : [];
+  const myServiceChargeSlips = currentEmployeeId
+    ? serviceChargeSlips.filter(
+        (slip) =>
+          slip.employeeId === currentEmployeeId &&
+          slip.net > 0 &&
+          (slip.status === 'PUBLISHED' || slip.status === 'DRAFT'),
+      )
+    : [];
+  const payslipCount = myPayrollRecords.length + myServiceChargeSlips.length;
 
   const getLeaveTypeName = (leaveTypeId: string) => {
     const leaveType = leaveTypes.find(lt => lt.id === leaveTypeId);
@@ -258,9 +343,13 @@ export default function EmployeeSelfServicePage() {
       {/* Welcome Header */}
       <div className="bg-gradient-to-r from-indigo-600 to-indigo-700 rounded-xl p-6 text-white">
         <div className="flex items-center gap-4">
-          <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center">
-            <User size={32} />
-          </div>
+          {employee?.hasProfilePhoto ? (
+            <img src={`${employeePhotoUrl(employee.id)}?v=${encodeURIComponent(employee.updatedAt || '1')}`} alt="" className="w-16 h-16 rounded-full object-cover" />
+          ) : (
+            <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center">
+              <User size={32} />
+            </div>
+          )}
           <div>
             <h1 className="text-2xl font-bold">Welcome back, {employee?.preferredName || employee?.fullName || user?.fullName}!</h1>
             <p className="text-indigo-100">{position?.title} • {department?.name}</p>
@@ -271,12 +360,17 @@ export default function EmployeeSelfServicePage() {
       <div className="bg-white rounded-xl border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="font-medium text-slate-800">Today’s punch</p>
-          <p className="text-sm text-slate-500">{todayRow?.clockIn ? `In ${todayRow.clockIn}` : 'Not clocked in'}{todayRow?.clockOut ? ` · Out ${todayRow.clockOut}` : ''}</p>
-          {todayRow?.clockInLat != null && <p className="text-xs text-slate-400">In at {todayRow.clockInLat.toFixed(5)}, {todayRow.clockInLng?.toFixed(5)}</p>}
+          <p className="text-sm text-slate-500">
+            {mine?.day?.clockIn ? `In ${mine.day.clockIn}` : 'Not clocked in'}
+            {mine?.day?.clockOut ? ` · Out ${mine.day.clockOut}` : ''}
+            {mine?.day?.clockInSiteName ? ` · ${mine.day.clockInSiteName}` : ''}
+          </p>
+          {mine?.blockedReason && <p className="text-sm text-red-600">{mine.blockedReason}</p>}
+          {mine === null && <p className="text-sm text-slate-500">{mineError || 'Punch is not available for this session.'}</p>}
         </div>
         <div className="flex gap-2">
-          {!todayRow?.clockIn && <button onClick={() => setPunchMode('in')} className="px-3 py-2 bg-emerald-600 text-white rounded-lg text-sm">Clock in</button>}
-          {todayRow?.clockIn && !todayRow.clockOut && <button onClick={() => setPunchMode('out')} className="px-3 py-2 bg-amber-600 text-white rounded-lg text-sm">Clock out</button>}
+          {mine?.next === 'in' && <button onClick={() => setPunchMode('in')} className="px-3 py-2 bg-emerald-600 text-white rounded-lg text-sm">Clock in</button>}
+          {mine?.next === 'out' && <button onClick={() => setPunchMode('out')} className="px-3 py-2 bg-amber-600 text-white rounded-lg text-sm">Clock out</button>}
         </div>
       </div>
       {punchMode && <ClockCapture title={punchMode === 'in' ? 'Clock in' : 'Clock out'} onCancel={() => setPunchMode(null)} onConfirm={savePunch} />}
@@ -325,7 +419,7 @@ export default function EmployeeSelfServicePage() {
               <DollarSign size={20} className="text-indigo-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-slate-800">{myPayrollRecords.length}</p>
+              <p className="text-2xl font-bold text-slate-800">{payslipCount}</p>
               <p className="text-xs text-slate-500">Payslips Available</p>
             </div>
           </div>
@@ -387,6 +481,12 @@ export default function EmployeeSelfServicePage() {
           {/* Overview Tab */}
           {activeTab === 'overview' && (
             <div className="space-y-6">
+              {user?.role === 'EMPLOYEE' && employee && (
+                <ProfileEditor mode="request" employee={employee} departments={departments} positions={positions} notify={addToast} onSaved={() => undefined} />
+              )}
+              {user?.role === 'EMPLOYEE' && !employee && (
+                <p className="text-sm text-slate-500">This login is not linked to an employee record.</p>
+              )}
               <div>
                 <h3 className="font-semibold text-slate-800 mb-4">Leave Balance</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -546,44 +646,93 @@ export default function EmployeeSelfServicePage() {
           {activeTab === 'payslips' && (
             <div className="space-y-4">
               <h3 className="font-semibold text-slate-800">My Payslips</h3>
+              <p className="text-sm text-slate-500">Monthly salary and service charge — view, print, or download as PDF.</p>
 
-              {myPayrollRecords.length === 0 ? (
+              {payslipCount === 0 ? (
                 <div className="text-center py-12 text-slate-400">
                   <FileText size={48} className="mx-auto mb-3 opacity-50" />
-                  <p>No payslip yet. It appears here after payroll for your month is finalized.</p>
+                  <p>No payslip yet. Salary slips appear after payroll is calculated; service charge after it is generated.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {myPayrollRecords.map(record => {
+                  {myPayrollRecords.map((record) => {
                     const period = getPayrollPeriod(record.payrollPeriodId);
-                    const lines = payrollItems.filter(item => item.payrollRecordId === record.id);
+                    const lines = payrollItems.filter((item) => item.payrollRecordId === record.id);
+                    const slipKey = `payroll:${record.id}`;
                     return (
-                      <div key={record.id} className="border border-slate-200 rounded-lg p-4">
+                      <div key={slipKey} className="border border-slate-200 rounded-lg p-4">
                         <div className="flex items-center justify-between mb-3">
                           <div>
-                            <p className="font-medium text-slate-800">{period?.periodCode || 'Payroll'}</p>
-                            <p className="text-sm text-slate-500">Paid on {period?.payDate || 'N/A'}</p>
+                            <p className="font-medium text-slate-800">Salary · {period?.periodCode || 'Payroll'}</p>
+                            <p className="text-sm text-slate-500">Pay date {period?.payDate || '—'}</p>
                           </div>
                           <div className="text-right">
                             <p className="text-lg font-bold text-indigo-600">{formatCurrency(record.netPay)}</p>
-                            <p className="text-xs text-slate-500">Net Pay</p>
+                            <p className="text-xs text-slate-500">Take Home</p>
                           </div>
                         </div>
-                        <button onClick={() => setOpenSlip(openSlip === record.id ? null : record.id)} className="w-full px-3 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200 transition-colors">
-                          {openSlip === record.id ? 'Hide slip' : 'View slip'}
-                        </button>
-                        {openSlip === record.id && (
-                          <div className="mt-3 space-y-1 text-sm">
-                            {lines.map(line => (
-                              <div key={line.id} className="flex justify-between">
-                                <span className="text-slate-600">{line.componentName}</span>
-                                <span className={line.category === 'DEDUCTION' ? 'text-red-600' : 'text-slate-800'}>{formatCurrency(line.amount)}</span>
-                              </div>
-                            ))}
-                            <div className="flex justify-between font-medium pt-2 border-t border-slate-200">
-                              <span>Net pay</span>
-                              <span>{formatCurrency(record.netPay)}</span>
-                            </div>
+                        <SlipActions
+                          open={openSlip === slipKey}
+                          onToggle={() => setOpenSlip(openSlip === slipKey ? null : slipKey)}
+                          onPrint={() => {
+                            setOpenSlip(slipKey);
+                            window.setTimeout(() => window.print(), 50);
+                          }}
+                        />
+                        {openSlip === slipKey && (
+                          <div className="mt-4 -mx-1">
+                            <PayslipSheet
+                              record={record}
+                              items={lines}
+                              employee={employee}
+                              department={department}
+                              position={position}
+                              period={period}
+                              terTables={terTables}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {myServiceChargeSlips.map((slip) => {
+                    const slipKey = `sc:${slip.id}`;
+                    const monthLabel = new Date(slip.year, slip.month - 1, 1).toLocaleDateString('en-GB', {
+                      month: 'long',
+                      year: 'numeric',
+                    });
+                    return (
+                      <div key={slipKey} className="border border-slate-200 rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <div>
+                            <p className="font-medium text-slate-800">Service charge · {monthLabel}</p>
+                            <p className="text-sm text-slate-500">
+                              Pay date {slip.payDate || '—'}
+                              {slip.status === 'DRAFT' ? ' · draft' : ''}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-lg font-bold text-indigo-600">{formatCurrency(slip.net)}</p>
+                            <p className="text-xs text-slate-500">Take Home</p>
+                          </div>
+                        </div>
+                        <SlipActions
+                          open={openSlip === slipKey}
+                          onToggle={() => setOpenSlip(openSlip === slipKey ? null : slipKey)}
+                          onPrint={() => {
+                            setOpenSlip(slipKey);
+                            window.setTimeout(() => window.print(), 50);
+                          }}
+                        />
+                        {openSlip === slipKey && (
+                          <div className="mt-4 -mx-1">
+                            <ServiceChargeSlip
+                              slip={slip}
+                              employee={employee}
+                              department={department}
+                              position={position}
+                            />
                           </div>
                         )}
                       </div>
@@ -605,9 +754,9 @@ export default function EmployeeSelfServicePage() {
                     <p className="text-sm text-slate-500">{task.detail} · due {task.dueDate} · from {task.assignerName}</p>
                   </div>
                   <div className="flex gap-2">
-                    {task.status === 'OPEN' && <button onClick={() => setTasks(prev => prev.map(row => row.id === task.id ? { ...row, status: 'IN_PROGRESS' } : row))} className="px-2 py-1 text-xs bg-amber-50 text-amber-800 rounded">Start</button>}
-                    {task.status !== 'DONE' && <button onClick={() => setTasks(prev => prev.map(row => row.id === task.id ? { ...row, status: 'DONE', completedAt: new Date().toISOString() } : row))} className="px-2 py-1 text-xs bg-emerald-50 text-emerald-800 rounded">Mark done</button>}
-                    {task.status === 'DONE' && <span className="text-xs text-emerald-700">Done</span>}
+                    {(task.status === 'OPEN' || task.status === 'ASSIGNED' || task.status === 'ACCEPTED') && <button onClick={() => setTasks(prev => prev.map(row => row.id === task.id ? { ...row, status: 'IN_PROGRESS' } : row))} className="px-2 py-1 text-xs bg-amber-50 text-amber-800 rounded">Start</button>}
+                    {task.status !== 'DONE' && task.status !== 'COMPLETED' && <button onClick={() => setTasks(prev => prev.map(row => row.id === task.id ? { ...row, status: row.externalId ? 'COMPLETED' : 'DONE', completedAt: new Date().toISOString() } : row))} className="px-2 py-1 text-xs bg-emerald-50 text-emerald-800 rounded">Mark done</button>}
+                    {(task.status === 'DONE' || task.status === 'COMPLETED') && <span className="text-xs text-emerald-700">{task.status === 'COMPLETED' ? 'COMPLETED' : 'Done'}</span>}
                   </div>
                 </div>
               ))}
@@ -669,27 +818,33 @@ export default function EmployeeSelfServicePage() {
                       <p className="font-medium text-slate-800">{type.name}</p>
                       {files.length === 0 ? <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800">Missing</span> : <span className="text-xs text-slate-500">{files.length} file{files.length === 1 ? '' : 's'}</span>}
                     </div>
-                    {files.map(doc => (
+                    {files.map(doc => {
+                      const href = doc.dataUrl || employeeDocumentFileUrl(doc.id, true);
+                      return (
                       <div key={doc.id} className="flex justify-between gap-3 text-sm">
                         <div>
                           <p className="text-slate-800">{doc.fileName}</p>
                           <p className="text-xs text-slate-500">{doc.verificationStatus}</p>
                         </div>
-                        {doc.dataUrl && <a href={doc.dataUrl} download={doc.fileName} className="text-indigo-700">Download</a>}
+                        <a href={href} target="_blank" rel="noreferrer" className="text-indigo-700">Download</a>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 );
               })}
-              {myDocuments.filter(doc => !activeDocumentTypes.some(type => type.name === doc.documentTypeName)).map(doc => (
+              {myDocuments.filter(doc => !activeDocumentTypes.some(type => type.name === doc.documentTypeName)).map(doc => {
+                const href = doc.dataUrl || employeeDocumentFileUrl(doc.id, true);
+                return (
                 <div key={doc.id} className="border border-slate-200 rounded-lg p-3 flex justify-between gap-3">
                   <div>
                     <p className="font-medium text-slate-800">{doc.fileName}</p>
                     <p className="text-xs text-slate-500">{doc.documentTypeName} · {doc.verificationStatus}</p>
                   </div>
-                  {doc.dataUrl && <a href={doc.dataUrl} download={doc.fileName} className="text-sm text-indigo-700">Download</a>}
+                  <a href={href} target="_blank" rel="noreferrer" className="text-sm text-indigo-700">Download</a>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -739,6 +894,43 @@ export default function EmployeeSelfServicePage() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function SlipActions({
+  open,
+  onToggle,
+  onPrint,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  onPrint: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2 payslip-print">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex-1 min-w-[120px] px-3 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200 transition-colors"
+      >
+        {open ? 'Hide slip' : 'View slip'}
+      </button>
+      <button
+        type="button"
+        onClick={onPrint}
+        className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50"
+      >
+        <Printer size={14} /> Print
+      </button>
+      <button
+        type="button"
+        onClick={onPrint}
+        className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"
+        title="Save as PDF from the print dialog"
+      >
+        <Download size={14} /> Download PDF
+      </button>
     </div>
   );
 }

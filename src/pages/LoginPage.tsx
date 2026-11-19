@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { Building2, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, wolfGate } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -24,15 +24,33 @@ export default function LoginPage() {
     }, 500);
   };
 
-  const demoAccounts = [
-    { email: 'admin@atrium.hr', password: 'admin123', role: 'HR Admin' },
-    { email: 'payroll@atrium.hr', password: 'payroll123', role: 'Payroll' },
-    { email: 'finance@atrium.hr', password: 'fin123', role: 'Finance' },
-    { email: 'director@atrium.hr', password: 'director123', role: 'Director' },
-  ];
+  const demoAccounts = import.meta.env.DEV
+    ? [
+        { email: 'admin@atrium.hr', password: 'admin123', role: 'HR Admin' },
+        { email: 'payroll@atrium.hr', password: 'payroll123', role: 'Payroll' },
+        { email: 'finance@atrium.hr', password: 'fin123', role: 'Finance' },
+        { email: 'director@atrium.hr', password: 'director123', role: 'Director' },
+      ]
+    : [];
+
+  if (wolfGate === "checking") {
+    return <p className="p-6 text-sm text-slate-600">Checking Wolf session…</p>;
+  }
+  if (wolfGate === "denied") {
+    return (
+      <p className="p-6 text-sm text-slate-700">
+        Wolf did not authorize this HR session. Sign in through Wolf. Demo accounts are not available in the Wolf HR screen.
+      </p>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-900 flex items-center justify-center p-4">
+    <div className="relative min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-900 flex items-center justify-center p-4">
+      {import.meta.env.DEV ? (
+        <p className="absolute left-0 right-0 top-0 bg-amber-100 px-4 py-2 text-center text-sm text-amber-950">
+          Local Vite development server. This screen is not Wolf authentication and is not a production session.
+        </p>
+      ) : null}
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
@@ -96,7 +114,7 @@ export default function LoginPage() {
           </form>
         </div>
 
-        {/* Demo Accounts */}
+        {import.meta.env.DEV ? (
         <div className="mt-6 bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20">
           <h3 className="text-sm font-medium text-slate-300 mb-3">Demo Accounts (click to fill)</h3>
           <div className="grid grid-cols-2 gap-2">
@@ -121,6 +139,7 @@ export default function LoginPage() {
             ))}
           </div>
         </div>
+        ) : null}
       </div>
     </div>
   );
